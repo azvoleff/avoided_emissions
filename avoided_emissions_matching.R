@@ -90,7 +90,7 @@ match_ae <- function(d) {
         this_d$biome <- droplevels(this_d$biome)
         this_d$ecoregion <- droplevels(this_d$ecoregion)
         this_d$pa <- droplevels(this_d$pa)
-        f <- treatment ~ precip + temp + elev + slope + dist_cities + dist_roads + crop_suitability
+        f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + dist_roads + crop_suitability
         # Can't stratify by land cover or climate if they only have one level
         if (nlevels(this_d$biome) >= 2) {
             f <- update(f, ~ . + strata(biome))
@@ -124,6 +124,8 @@ match_ae <- function(d) {
         if (subdim_works) {
             m <- fullmatch(dists, min.controls=1, max.controls=1, data=this_d)
             this_d <- this_d[matched(m), ]
+            # Ensure other needed variables like 2015 forest cover are included
+            this_d <- bind_cols(this_d, m[matched(m), ]$forest_2015)
         } else {
             this_d <- data.frame()
         }
@@ -147,6 +149,13 @@ sites <- st_read("Data/impact_sites.gpkg", layer="impact_sites")
 sites <- st_zm(sites, drop=TRUE)
 
 # Load covariates
+forest <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_forest_2000_2015_ha[-.0-9]*tif')
+names(forest) <- c('forest_2000',
+                   'forest_2005',
+                   'forest_2010',
+                   'forest_2015')
+NAvalue(forest) <- -32768
+
 covariates_1 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_01[-.0-9]*tif')
 names(covariates_1) <- c('precip',
                          'temp',
@@ -224,9 +233,10 @@ ae <- foreach(n=1:200,
 
     # Crop matching vars to the area of interest (the region(s) the site falls 
     # within) and then extract values
+    fc <- crop(forest, r)
     cv_1 <- crop(covariates_1, r)
     cv_2 <- crop(covariates_2, r)
-    vals <- getValues(stack(r, treat_or_control, cv_1, cv_2))
+    vals <- getValues(stack(r, treat_or_control, fc, cv_1, cv_2))
     vals <- data.frame(vals)
     vals <- vals[!is.na(vals$treatment), ]
     vals$treatment <- as.logical(vals$treatment)
