@@ -220,14 +220,21 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 # like the Galapagos for example
 #for (n in 1:3)) {
 #m <- foreach(n=1:nrow(sites),
-ae <- foreach(row_num=1:5,
+ae <- foreach(row_num=1:50,
 #ae <- foreach(row_num=1:200,
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
-             .combine=foreach_rbind, .inorder=FALSE) %do% {
-    print(row_num)
+             .combine=foreach_rbind) %do% {
+    print(row_num )
     p <- sites[row_num, ]
     # TODO: st_intersects expects planar coords
-    r <- crop(regions_rast, regions[st_intersects(p, regions)[[1]], ])
+    inter <- st_intersects(p, regions)[[1]]
+    if (length(inter) > 0) {
+        r <- crop(regions_rast, regions[inter, ])
+    } else {
+        # Some areas won't overlap the GADM at all (marine sites for example). 
+        # Return no results for these areas.
+        return(NULL)
+    }
     p_rast <- rasterize(p, r, background=0)
     # Note that the below will drop any portions of a site that don't fall 
     # within a region in GADM- this means that marine areas will be dropped. 
