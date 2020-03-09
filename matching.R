@@ -219,7 +219,7 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 # TODO: some places can't be matched on level 2 since they are ALL of level 2, 
 # like the Galapagos for example
 #ae <- foreach(row_num=1:50,
-ae <- foreach(row_num=nrow(sites),
+ae <- foreach(row_num=1:nrow(sites),
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
     print(row_num )
