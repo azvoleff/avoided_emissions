@@ -65,7 +65,7 @@ foreach_rbind <- function(d1, d2) {
     }
 }
 
-match_ae <- function(d) {
+match_ae <- function(d, f) {
     # Filter out sites without at least one treatment unit or without at
     # least one control unit
     d <- d %>%
@@ -90,7 +90,6 @@ match_ae <- function(d) {
         this_d$biome <- droplevels(this_d$biome)
         this_d$ecoregion <- droplevels(this_d$ecoregion)
         this_d$pa <- droplevels(this_d$pa)
-        f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + dist_roads + crop_suitability
         # Can't stratify by land cover or climate if they only have one level
         if (nlevels(this_d$biome) >= 2) {
             f <- update(f, ~ . + strata(biome))
@@ -124,8 +123,6 @@ match_ae <- function(d) {
         if (subdim_works) {
             m <- fullmatch(dists, min.controls=1, max.controls=1, data=this_d)
             this_d <- this_d[matched(m), ]
-            # Ensure other needed variables like 2015 forest cover are included
-            this_d <- bind_cols(this_d, m[matched(m), ]$forest_2015)
         } else {
             this_d <- data.frame()
         }
@@ -140,12 +137,20 @@ match_ae <- function(d) {
     return(ret)
 }
 
+# Basic function to extract variable names from a formula object
+get_names <- function(f) {
+    f <- paste0(as.character(f), collapse=' ')
+    vars <- strsplit(f, split='[+ ~]')[[1]]
+    vars[vars != '']
+}
+
 ###############################################################################
 
 # Load polygons - note they are reprojected to WGS84
 # TODO: both need to be planar for st_intersects, so will need to reproject the 
 # rasters to CEA
 sites <- st_read("Data/impact_sites.gpkg", layer="impact_sites")
+# Drop the z dimension
 sites <- st_zm(sites, drop=TRUE)
 
 # Load covariates
@@ -215,11 +220,12 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 # like the Galapagos for example
 #for (n in 1:3)) {
 #m <- foreach(n=1:nrow(sites),
-ae <- foreach(n=1:200,
+ae <- foreach(row_num=1:5,
+#ae <- foreach(row_num=1:200,
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind, .inorder=FALSE) %do% {
-    print(n)
-    p <- sites[n, ]
+    print(row_num)
+    p <- sites[row_num, ]
     # TODO: st_intersects expects planar coords
     r <- crop(regions_rast, regions[st_intersects(p, regions)[[1]], ])
     p_rast <- rasterize(p, r, background=0)
@@ -245,11 +251,28 @@ ae <- foreach(n=1:200,
     vals$pa <- as.factor(vals$pa)
 
     # Match on each treatment pixel
-    m <- match_ae(vals)
+    f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + dist_roads + crop_suitability
+    m <- match_ae(vals, f)
     if (is.null(m)) {
         return(NULL)
     } else {
+        m <- select(m, c(get_names(f), 'forest_2015'))
         m$CI_ID <- as.character(p$CI_ID)
         return(m %>% select(CI_ID, everything()))
     }
 }
+
+write.csv(ae, file='ae_raw.csv', row.names=FALSE)
+
+emissions_details <- ae %>%
+    group_by(CI_ID, treatment) %>%
+    summarise(forest_initial=sum(forest_2000, na.rm=TRUE),
+              forest_final=sum(forest_2015, na.rm=TRUE),
+              forest_loss = forest_initial - forest_final,
+              n= n())
+write.csv(emissions_details, file='ae_details.csv', row.names=FALSE)
+emissions_summary <- emissions_details %>% group_by(CI_ID) %>%
+        summarise(forest_ha_treat_minus_control=forest_loss[treatment] - forest_loss[!treatment],
+                  n_treatment = n[treatment],
+                  n_control = n[!treatment])
+write.csv(emissions_summary, file='ae_summary.csv', row.names=FALSE)
