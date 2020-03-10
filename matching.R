@@ -196,6 +196,8 @@ names(lc_2001) <- lc_bands
 lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
 names(lc_2015) <- lc_bands
 
+# TODO: Add population and population growth rate
+
 ###############################################################################
 ### Load GADM boundaries
 regions <- st_read(paste0(data_folder, "/gadm36_levels_gpkg/gadm36_levels.gpkg"), layer="level1")
@@ -218,8 +220,8 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 
 # TODO: some places can't be matched on level 2 since they are ALL of level 2, 
 # like the Galapagos for example
-ae <- foreach(row_num=1:120,
 #ae <- foreach(row_num=1:nrow(sites),
+ae <- foreach(row_num=1:200,
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
     print(row_num )
@@ -227,7 +229,7 @@ ae <- foreach(row_num=1:120,
     # TODO: st_intersects expects planar coords
     inter <- tryCatch(st_intersects(p, regions)[[1]],
                       error=function(e) return(FALSE))
-    if (!inter | (length(inter) == 0)) {
+    if ((length(inter) == 0) || !inter) {
         # Some areas won't overlap the GADM at all (marine sites for example). 
         # Return no results for these areas.
         return(NULL)
