@@ -176,13 +176,18 @@ names(covariates_2) <- c('dist_cities',
                          'travel_cities',
                          'pa', 
                          'crop_suitability')
-#covariates_2 <- crop(covariates_2, regions)
 NAvalue(covariates_2) <- -32768
+
+biomass <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'biomass_above_below_tons[-.0-9]*tif')
+names(biomass) <- c('agb', 'bgb')
+NAvalue(biomass) <- -32768
+extent(biomass) <- extent(covariates_1)
 
 population <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_pop_2000_2015_cnt[-.0-9]*tif')
 names(population) <- c('pop_2000', 'pop_2005', 'pop_2010', 'pop_2015')
-#population <- crop(population, regions)
 NAvalue(population) <- -32768
+population_growth <- raster('population_growth.tif')
+names(population_growth) <- c('pop_growth')
 
 lc_bands <- c('forest',
               'grassland',
@@ -220,8 +225,7 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 
 # TODO: some places can't be matched on level 2 since they are ALL of level 2, 
 # like the Galapagos for example
-#ae <- foreach(row_num=1:nrow(sites),
-ae <- foreach(row_num=1:200,
+ae <- foreach(row_num=1:nrow(sites),
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
     print(row_num )
@@ -242,15 +246,21 @@ ae <- foreach(row_num=1:200,
     # Given this calculation is for avoided emissions, likely not a problem... 
     #
     # Treatment is 1, control is zero
+    # TODO: Need to ensure we also mask out other areas where CI has ongoing 
+    # interventions.
     treat_or_control <- mask(p_rast, r)
     names(treat_or_control) <- 'treatment'
 
     # Crop matching vars to the area of interest (the region(s) the site falls 
     # within) and then extract values
-    fc <- crop(forest, r)
-    cv_1 <- crop(covariates_1, r)
-    cv_2 <- crop(covariates_2, r)
-    vals <- getValues(stack(r, treat_or_control, fc, cv_1, cv_2))
+    fc_crop <- crop(forest, r)
+    cv_1_crop <- crop(covariates_1, r)
+    cv_2_crop <- crop(covariates_2, r)
+    biomass_crop <- crop(biomass, r)
+    pop_crop <- crop(population, r)
+    pop_growth_crop <- crop(population_growth, r)
+    vals <- getValues(stack(r, treat_or_control, fc_crop, cv_1_crop, cv_2_crop, 
+                            biomass_crop, pop_crop, pop_growth_crop))
     vals <- data.frame(vals)
     vals <- vals[!is.na(vals$treatment), ]
     vals$treatment <- as.logical(vals$treatment)
@@ -259,7 +269,8 @@ ae <- foreach(row_num=1:200,
     vals$pa <- as.factor(vals$pa)
 
     # Match on each treatment pixel
-    f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + dist_roads + crop_suitability
+    f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + 
+        dist_roads + crop_suitability + pop_2000 + pop_growth + agb
     m <- match_ae(vals, f)
     if (is.null(m)) {
         return(NULL)
@@ -277,10 +288,15 @@ emissions_details <- ae %>%
     summarise(forest_initial=sum(forest_2000, na.rm=TRUE),
               forest_final=sum(forest_2015, na.rm=TRUE),
               forest_loss = forest_initial - forest_final,
-              n= n())
+              agb_initial = sum(agb, na.rm=TRUE),
+              agb_final = agb_initial * ((forest_final - forest_initial)/forest_initial + 1),
+              agb_change = agb_final - agb_initial,
+              n = n())
+
 write.csv(emissions_details, file='ae_details.csv', row.names=FALSE)
 emissions_summary <- emissions_details %>% group_by(CI_ID) %>%
-        summarise(forest_ha_treat_minus_control=forest_loss[treatment] - forest_loss[!treatment],
+        summarise(forest_loss_ha_treat_minus_control=forest_loss[treatment] - forest_loss[!treatment],
+                  agb_loss_treat_minus_control=agb_change[treatment] - agb_change[!treatment],
                   n_treatment = n[treatment],
                   n_control = n[!treatment])
 write.csv(emissions_summary, file='ae_summary.csv', row.names=FALSE)
