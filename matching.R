@@ -201,7 +201,7 @@ names(lc_2001) <- lc_bands
 lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
 names(lc_2015) <- lc_bands
 
-# TODO: Add population and population growth rate
+# TODO: Add annual forest cover data
 
 ###############################################################################
 ### Load GADM boundaries
@@ -281,6 +281,7 @@ ae <- foreach(row_num=1:nrow(sites),
     }
 }
 
+save(ae, file='ae_raw.RData')
 write.csv(ae, file='ae_raw.csv', row.names=FALSE)
 
 emissions_details <- ae %>%
@@ -292,8 +293,8 @@ emissions_details <- ae %>%
               agb_final = agb_initial * ((forest_final - forest_initial)/forest_initial + 1),
               agb_change = agb_final - agb_initial,
               n = n())
-
 write.csv(emissions_details, file='ae_details.csv', row.names=FALSE)
+
 emissions_summary <- emissions_details %>% group_by(CI_ID) %>%
         summarise(forest_loss_ha_treat_minus_control=forest_loss[treatment] - forest_loss[!treatment],
                   agb_loss_treat_minus_control=agb_change[treatment] - agb_change[!treatment],
