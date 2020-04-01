@@ -110,7 +110,7 @@ match_ae <- function(d, f) {
             model <- glm(f, data=this_d)
             dists <- match_on(model, data=this_d)
         } else {
-            # Use Mahalanobis distance if there aren't enought points to run a
+            # Use Mahalanobis distance if there aren't enough points to run a
             # glm
             dists <- match_on(f, data=this_d)
         }
@@ -202,6 +202,8 @@ lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'
 names(lc_2015) <- lc_bands
 
 # TODO: Add annual forest cover data
+# TODO: Add agricultural data
+# TODO: Filter out small sites
 
 ###############################################################################
 ### Load GADM boundaries
