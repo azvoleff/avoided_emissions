@@ -20,10 +20,9 @@ sites_cea <- st_transform(sites, '+proj=cea')
 sites_cea$area_cea <- st_area(sites_cea)
 units(sites_cea$area_cea) <- 'hectares'
 
-sites_cea$area_cea_lt_100ha <- sites_cea$area_cea < as_units(100, 'hectares')
 sites <- st_transform(sites_cea, 4326)
 
-table(sites_cea$area_cea_lt_100ha)
+table(sites_cea$area_cea < as_units(100, 'hectares'))
 
 sites %>%
     select(CI_ID,
@@ -36,7 +35,8 @@ sites %>%
            Intervention_2=Interven_2,
            Restoration=Restoratio,
            CI_Start_Date=CI_Start_D,
-           CI_End_Date=CI_End_Dat) -> sites
+           CI_End_Date=CI_End_Dat,
+           Area_ha=area_cea) -> sites
 sites$CI_ID <- factor(sites$CI_ID)
 sites$Intervention <- as.character(sites$Intervention)
 sites$Intervention[sites$Intervention == 'Sustainable Forest Management'] <- 'Sust. Forest Mng.'
