@@ -1,17 +1,30 @@
 library(sf)
+library(tidyverse)
+library(units)
 library(raster)
 library(fasterize)
 library(gdalUtils)
 library(foreach)
-library(dplyr)
-library(doParallel)
 library(optmatch)
     
-registerDoParallel(4)
-
 options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
+
+# Load polygons - note they are reprojected to WGS84
+load('sites.RData')
+dim(sites)
+
+# Filter to only sites over 100 ha
+sites <- sites[!sites$Area_ha < as_units(100, 'hectares'), ]
+dim(sites)
+
+# Select only sites that are not rangeland restoration
+sites$Rangeland <- FALSE
+sites$Rangeland[sites$Restoration == 'Rangeland Restoration'] <- TRUE
+table(sites$Rangeland)
+sites <- sites[!sites$Rangeland, ]
+dim(sites)
 
 load_as_vrt <- function(folder, pattern, band=FALSE, raster=TRUE) {
     vrt_file <- tempfile(fileext='.vrt')
@@ -146,21 +159,7 @@ get_names <- function(f) {
 
 ###############################################################################
 
-# Load polygons - note they are reprojected to WGS84
-# TODO: both need to be planar for st_intersects, so will need to reproject the 
-# rasters to CEA
-sites <- st_read("Data/impact_sites.gpkg", layer="impact_sites")
-# Drop the z dimension
-sites <- st_zm(sites, drop=TRUE)
-
 # Load covariates
-forest <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_forest_2000_2015_ha[-.0-9]*tif')
-names(forest) <- c('forest_2000',
-                   'forest_2005',
-                   'forest_2010',
-                   'forest_2015')
-NAvalue(forest) <- -32768
-
 covariates_1 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_01[-.0-9]*tif')
 names(covariates_1) <- c('precip',
                          'temp',
@@ -186,24 +185,57 @@ extent(biomass) <- extent(covariates_1)
 population <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_pop_2000_2015_cnt[-.0-9]*tif')
 names(population) <- c('pop_2000', 'pop_2005', 'pop_2010', 'pop_2015')
 NAvalue(population) <- -32768
+
 population_growth <- raster('population_growth.tif')
 names(population_growth) <- c('pop_growth')
 
-lc_bands <- c('forest',
-              'grassland',
-              'agriculture',
-              'wetlands',
-              'artificial', 
-              'other',
-              'water')
-lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
-names(lc_2001) <- lc_bands
-lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
-names(lc_2015) <- lc_bands
+fc_change <- raster('fc_change.tif')
+names(fc_change) <- c('pop_growth')
 
-# TODO: Add annual forest cover data
-# TODO: Add agricultural data
-# TODO: Filter out small sites
+# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
+
+
+# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
+# names(lc_2001) <- c('lc_2001_forest',
+#                     'lc_2001_grassland',
+#                     'lc_2001_agriculture',
+#                     'lc_2001_wetlands',
+#                     'lc_2001_artificial', 
+#                     'lc_2001_other',
+#                     'lc_2001_water')
+
+lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
+names(lc_2015) <- c('lc_2015_forest',
+                    'lc_2015_grassland',
+                    'lc_2015_agriculture',
+                    'lc_2015_wetlands',
+                    'lc_2015_artificial', 
+                    'lc_2015_other',
+                    'lc_2015_water')
+
+fc00_09 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc00_09_ha[-.0-9]*tif')
+NAvalue(fc00_09) <- -32768
+names(fc00_09) <- c('fc_2000',
+                    'fc_2001',
+                    'fc_2002',
+                    'fc_2003',
+                    'fc_2004',
+                    'fc_2005',
+                    'fc_2006',
+                    'fc_2007',
+                    'fc_2008',
+                    'fc_2009')
+fc10_18 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_18_ha[-.0-9]*tif')
+NAvalue(fc10_18) <- -32768
+names(fc10_18) <- c('fc_2010',
+                    'fc_2011',
+                    'fc_2012',
+                    'fc_2013',
+                    'fc_2014',
+                    'fc_2015',
+                    'fc_2016',
+                    'fc_2017',
+                    'fc_2018')
 
 ###############################################################################
 ### Load GADM boundaries
@@ -227,12 +259,14 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 
 # TODO: some places can't be matched on level 2 since they are ALL of level 2, 
 # like the Galapagos for example
-ae <- foreach(row_num=1:nrow(sites),
+ae <- foreach(row_num=1:10,
+#ae <- foreach(row_num=1:nrow(sites),
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
     print(row_num )
     p <- sites[row_num, ]
-    # TODO: st_intersects expects planar coords
+    # TODO: both need to be planar for st_intersects, so will need to reproject 
+    # the rasters to CEA
     inter <- tryCatch(st_intersects(p, regions)[[1]],
                       error=function(e) return(FALSE))
     if ((length(inter) == 0) || !inter) {
@@ -248,6 +282,7 @@ ae <- foreach(row_num=1:nrow(sites),
     # Given this calculation is for avoided emissions, likely not a problem... 
     #
     # Treatment is 1, control is zero
+    #
     # TODO: Need to ensure we also mask out other areas where CI has ongoing 
     # interventions.
     treat_or_control <- mask(p_rast, r)
@@ -255,15 +290,18 @@ ae <- foreach(row_num=1:nrow(sites),
 
     # Crop matching vars to the area of interest (the region(s) the site falls 
     # within) and then extract values
-    fc_crop <- crop(forest, r)
+    fc00_09_crop <- crop(fc00_09, r)
+    fc10_18_crop <- crop(fc10_18, r)
+    lc_2015_crop <- crop(lc_2015, r)
     cv_1_crop <- crop(covariates_1, r)
     cv_2_crop <- crop(covariates_2, r)
     biomass_crop <- crop(biomass, r)
     pop_crop <- crop(population, r)
     pop_growth_crop <- crop(population_growth, r)
-    vals <- getValues(stack(r, treat_or_control, fc_crop, cv_1_crop, cv_2_crop, 
-                            biomass_crop, pop_crop, pop_growth_crop))
-    vals <- data.frame(vals)
+    fc_change_crop <- crop(fc_change, r)
+    d <- stack(r, treat_or_control, fc_change, fc00_09_crop, fc10_18_crop, lc_2015_crop, 
+               cv_1_crop, cv_2_crop, biomass_crop, pop_crop, pop_growth_crop)
+    vals <- data.frame(getValues(d))
     vals <- vals[!is.na(vals$treatment), ]
     vals$treatment <- as.logical(vals$treatment)
     vals$biome <- as.factor(vals$biome)
@@ -271,8 +309,9 @@ ae <- foreach(row_num=1:nrow(sites),
     vals$pa <- as.factor(vals$pa)
 
     # Match on each treatment pixel
-    f <- treatment ~ forest_2000 + precip + temp + elev + slope + dist_cities + 
-        dist_roads + crop_suitability + pop_2000 + pop_growth + agb
+    f <- treatment ~ fc_change + fc_2015 + lc_2015_agriculture + precip + temp + elev + 
+        slope + dist_cities + dist_roads + crop_suitability + pop_2015 + 
+        pop_growth + agb
     m <- match_ae(vals, f)
     if (is.null(m)) {
         return(NULL)
@@ -283,9 +322,13 @@ ae <- foreach(row_num=1:nrow(sites),
     }
 }
 
+stop()
+
 save(ae, file='ae_raw.RData')
 write.csv(ae, file='ae_raw.csv', row.names=FALSE)
 
+# TODO: Need to ensure agb change calculations are based on initial and final 
+# forest cover for correct years for intervention and year of CI sites
 emissions_details <- ae %>%
     group_by(CI_ID, treatment) %>%
     summarise(forest_initial=sum(forest_2000, na.rm=TRUE),
