@@ -6,12 +6,12 @@ library(fasterize)
 library(gdalUtils)
 library(foreach)
 library(optmatch)
+library(mapview)
     
 options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
 
-# Load polygons - note they are reprojected to WGS84
 load('sites.RData')
 dim(sites)
 
@@ -191,6 +191,7 @@ names(population_growth) <- c('pop_growth')
 
 fc_change <- raster('fc_change.tif')
 names(fc_change) <- c('pop_growth')
+extent(fc_change) <- extent(covariates_1)
 
 # lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
 
@@ -225,6 +226,7 @@ names(fc00_09) <- c('fc_2000',
                     'fc_2007',
                     'fc_2008',
                     'fc_2009')
+extent(fc00_09) <- extent(covariates_1)
 fc10_18 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_18_ha[-.0-9]*tif')
 NAvalue(fc10_18) <- -32768
 names(fc10_18) <- c('fc_2010',
@@ -236,6 +238,7 @@ names(fc10_18) <- c('fc_2010',
                     'fc_2016',
                     'fc_2017',
                     'fc_2018')
+extent(fc10_18) <- extent(covariates_1)
 
 ###############################################################################
 ### Load GADM boundaries
@@ -257,16 +260,17 @@ names(regions_rast) <- 'region'
 region_IDs_after_rasterization <- get_unique(regions_rast)
 stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 
-# TODO: some places can't be matched on level 2 since they are ALL of level 2, 
-# like the Galapagos for example
+# Remember, some places can't be matched on level 2 since they are ALL of level 
+# 2, like the Galapagos for example
 ae <- foreach(row_num=1:10,
 #ae <- foreach(row_num=1:nrow(sites),
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
     print(row_num )
     p <- sites[row_num, ]
-    # TODO: both need to be planar for st_intersects, so will need to reproject 
-    # the rasters to CEA
+    # st_intersects expects planar coords, but approximate match from WGS84 is 
+    # fine here since the regions are all much larger than the sites - will 
+    # convert to CEA later when it matters
     inter <- tryCatch(st_intersects(p, regions)[[1]],
                       error=function(e) return(FALSE))
     if ((length(inter) == 0) || !inter) {
@@ -276,6 +280,7 @@ ae <- foreach(row_num=1:10,
     } else {
         r <- crop(regions_rast, regions[inter, ])
     }
+
     p_rast <- rasterize(p, r, background=0)
     # Note that the below will drop any portions of a site that don't fall 
     # within a region in GADM- this means that marine areas will be dropped. 
@@ -290,6 +295,7 @@ ae <- foreach(row_num=1:10,
 
     # Crop matching vars to the area of interest (the region(s) the site falls 
     # within) and then extract values
+    fc_change_crop <- crop(fc_change, r)
     fc00_09_crop <- crop(fc00_09, r)
     fc10_18_crop <- crop(fc10_18, r)
     lc_2015_crop <- crop(lc_2015, r)
@@ -299,9 +305,14 @@ ae <- foreach(row_num=1:10,
     pop_crop <- crop(population, r)
     pop_growth_crop <- crop(population_growth, r)
     fc_change_crop <- crop(fc_change, r)
-    d <- stack(r, treat_or_control, fc_change, fc00_09_crop, fc10_18_crop, lc_2015_crop, 
-               cv_1_crop, cv_2_crop, biomass_crop, pop_crop, pop_growth_crop)
-    vals <- data.frame(getValues(d))
+    d <- stack(r, treat_or_control, fc_change_crop, fc00_09_crop, fc10_18_crop, 
+               lc_2015_crop, cv_1_crop, cv_2_crop, biomass_crop, pop_crop, 
+               pop_growth_crop)
+
+    # Project all items to cylindrical equal area
+    d_cea <- projectRaster(d, crs=CRS('+proj=cea'), method='ngb')
+
+    vals <- data.frame(getValues(d_cea))
     vals <- vals[!is.na(vals$treatment), ]
     vals$treatment <- as.logical(vals$treatment)
     vals$biome <- as.factor(vals$biome)
@@ -316,7 +327,26 @@ ae <- foreach(row_num=1:10,
     if (is.null(m)) {
         return(NULL)
     } else {
-        m <- select(m, c(get_names(f), 'forest_2015'))
+        m <- select(m, c(get_names(f),
+                         'fc_2000',
+                         'fc_2001',
+                         'fc_2002',
+                         'fc_2003',
+                         'fc_2004',
+                         'fc_2005',
+                         'fc_2006',
+                         'fc_2007',
+                         'fc_2008',
+                         'fc_2009',
+                         'fc_2010',
+                         'fc_2011',
+                         'fc_2012',
+                         'fc_2013',
+                         'fc_2014',
+                         'fc_2015',
+                         'fc_2016',
+                         'fc_2017',
+                         'fc_2018'))
         m$CI_ID <- as.character(p$CI_ID)
         return(m %>% select(CI_ID, everything()))
     }
