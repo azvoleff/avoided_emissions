@@ -26,10 +26,6 @@ table(sites_cea$area_cea_lt_100ha)
 save(sites, sites_cea, file='sites.RData')
 
 # Check for overlaps
-sites_gt_100ha <- sites[!sites$area_cea_lt_100ha, ]
-
-sites_2018_rasterized <- fasterize(sites[), ], raster(covariates_1[[1]]), field='one', fun='sum')
-
 intersections <- foreach (year in c(2019. 2019)) %do% {
     these_sites <- sites_cea[(!sites$area_cea_lt_100ha) & (sites$data_year == 2018)]
     return st_intersects(these_sites, these_sites)

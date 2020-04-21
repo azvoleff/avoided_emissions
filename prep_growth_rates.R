@@ -62,5 +62,5 @@ fc_change <- overlay(fc_2000, fc_2015,
         r[isinfs] <- max(r, na.rm=TRUE)
         r
     })
-writeRaster(fc_change, filename='forest_change.tif', 
+writeRaster(fc_change, filename='fc_change.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
