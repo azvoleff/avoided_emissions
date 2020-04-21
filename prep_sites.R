@@ -1,6 +1,8 @@
 library(sf)
 library(foreach)
 library(units)
+library(tidyverse)
+library(lubridate)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
 
@@ -23,10 +25,49 @@ sites <- st_transform(sites_cea, 4326)
 
 table(sites_cea$area_cea_lt_100ha)
 
+sites %>%
+    select(CI_ID,
+           Country,
+           Star_Tag=Star_Tag_P,
+           Geographic,
+           Area=Area_Name_,
+           Intervention=Interventi,
+           Intervention_1=Interven_1,
+           Intervention_2=Interven_2,
+           Restoration=Restoratio,
+           CI_Start_Date=CI_Start_D,
+           CI_End_Date=CI_End_Dat) -> sites
+sites$CI_ID <- factor(sites$CI_ID)
+sites$Intervention <- as.character(sites$Intervention)
+sites$Intervention[sites$Intervention == 'Sustainable Forest Management'] <- 'Sust. Forest Mng.'
+sites$Intervention[sites$Intervention == 'Protected Area (National or Regional)'] <- 'PA'
+sites$Intervention[sites$Intervention == 'Community Based Natural Resource Management'] <- 'CBNRM'
+sites$Intervention[sites$Intervention == 'Coastal Community Fisheries'] <- 'Coastal\nCommunity Fisheries'
+sites$Intervention[sites$Intervention == 'Other Sustainable Fishery'] <- 'Other\nSustainable Fishery'
+sites$Intervention[sites$Intervention == 'Conservation Agreement'] <- 'Conservation\nAgreement'
+sites$Intervention[sites$Intervention == 'Conservation Concessions'] <- 'Conservation\nConcessions'
+sites$Intervention[sites$Intervention == 'Indigenous Land or Water'] <- 'Indigenous\nLand or Water'
+
+sites$CI_Start_Date_clean <- as.character(sites$CI_Start_Date)
+sites$CI_Start_Date_clean <- str_replace(sites$CI_Start_Date_clean, '^([0-9]{4})$', '1/1/\\1')
+sites$CI_Start_Date_clean <- mdy(sites$CI_Start_Date_clean)
+# Set all start dates that are missing to 2016 (the median year)
+sites$CI_Start_Date_clean[is.na(sites$CI_Start_Date_clean)] <- mdy('1/1/2016')
+sites$CI_Start_Year <- year(sites$CI_Start_Date_clean)
+
+sites$CI_End_Date_clean <- as.character(sites$CI_End_Date)
+sites$CI_End_Date_clean <- str_replace(sites$CI_End_Date_clean, '^([0-9]{4})$', '1/1/\\1')
+sites$CI_End_Date_clean <- mdy(sites$CI_End_Date_clean)
+
+# Set all end dates that are greater than 12/31/2019 to NA, so they are treated 
+# as ongoing
+sites$CI_End_Date_clean[sites$CI_End_Date_clean > mdy('12/31/2019')] <- NA
+sites$CI_End_Year <- year(sites$CI_End_Date_clean)
+
 save(sites, sites_cea, file='sites.RData')
 
 # Check for overlaps
-intersections <- foreach (year in c(2019. 2019)) %do% {
-    these_sites <- sites_cea[(!sites$area_cea_lt_100ha) & (sites$data_year == 2018)]
-    return st_intersects(these_sites, these_sites)
-}
+# intersections <- foreach (year in c(2019, 2019)) %do% {
+#     these_sites <- sites_cea[(!sites$area_cea_lt_100ha) & (sites$data_year == 2018), ]
+#     return st_intersects(these_sites, these_sites)
+# }
