@@ -50,92 +50,6 @@ get_unique <- function(x) {
     return (na.omit(out))
 }
 
-# Function to allow rbinding dataframes with foreach even when some dataframes 
-# may not have any rows
-foreach_rbind <- function(d1, d2) {
-    if (is.null(d1) & is.null(d2)) {
-        return(NULL)
-    } else if (!is.null(d1) & is.null(d2)) {
-        return(d1)
-    } else if (is.null(d1) & !is.null(d2)) {
-        return(d2)
-    } else  {
-        return(bind_rows(d1, d2))
-    }
-}
-
-match_ae <- function(d, f) {
-    # Filter out sites without at least one treatment unit or without at
-    # least one control unit
-    d <- d %>%
-        filter(complete.cases(.)) %>%
-        group_by(region) %>%
-        mutate(n_treatment=sum(treatment),
-               n_control=sum(!treatment)) %>%
-        filter(n_treatment >= 1, n_control >= 1)
-
-    # Note custom combine to handle iterations that don't return any value
-    ret <- foreach (this_region=unique(d$region),
-                    .packages=c('optmatch', 'dplyr'),
-                    .combine=foreach_rbind, .inorder=FALSE) %do% {
-        this_d <- filter(d, region == this_region)
-        d_CI <- filter(this_d, treatment)
-        # Filter out climates and land covers that don't appear in the CI
-        # sample, and drop these levels from the factors
-        this_d <- filter(this_d,
-            biome %in% unique(d_CI$biome),
-            ecoregion %in% unique(d_CI$ecoregion),
-            pa %in% unique(d_CI$pa))
-        this_d$biome <- droplevels(this_d$biome)
-        this_d$ecoregion <- droplevels(this_d$ecoregion)
-        this_d$pa <- droplevels(this_d$pa)
-        # Can't stratify by land cover or climate if they only have one level
-        if (nlevels(this_d$biome) >= 2) {
-            f <- update(f, ~ . + strata(biome))
-        } else {
-            f <- update(f, ~ . - biome)
-        }
-        if (nlevels(this_d$ecoregion) >= 2) {
-            f <- update(f, ~ . + strata(ecoregion))
-        } else {
-            f <- update(f, ~ . - ecoregion)
-        }
-        if (nlevels(this_d$pa) >= 2) {
-            f <- update(f, ~ . + strata(pa))
-        } else {
-            f <- update(f, ~ . - pa)
-        }
-        if (nrow(d_CI) > 2) {
-            model <- glm(f, data=this_d)
-            dists <- match_on(model, data=this_d)
-        } else {
-            # Use Mahalanobis distance if there aren't enough points to run a
-            # glm
-            dists <- match_on(f, data=this_d)
-        }
-        dists <- caliper(dists, 2)
-        # If the controls are too far from the treatments (due to the caliper) 
-        # then the matching may fail. Can test for this by seeing if subdim 
-        # runs successfully
-        subdim_works <- tryCatch(is.data.frame(subdim(dists)),
-                                 error=function(e) return(FALSE))
-        if (subdim_works) {
-            m <- fullmatch(dists, min.controls=1, max.controls=1, data=this_d)
-            this_d <- this_d[matched(m), ]
-        } else {
-            this_d <- data.frame()
-        }
-        # Need to handle the possibility that there were no matches for this 
-        # treatment, meaning this_d will be an empty data.frame
-        if (nrow(this_d) == 0) {
-            return(NULL)
-        } else {
-            return(this_d)
-        }
-    }
-    return(ret)
-}
-
 # Basic function to extract variable names from a formula object
 get_names <- function(f) {
     f <- paste0(as.character(f), collapse=' ')
@@ -163,14 +77,13 @@ names(covariates_2) <- c('dist_cities',
                          'crop_suitability')
 NAvalue(covariates_2) <- -32768
 
-biomass <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'biomass_above_below_tons[-.0-9]*tif')
-names(biomass) <- c('agb', 'bgb')
-NAvalue(biomass) <- -32768
-extent(biomass) <- extent(covariates_1)
-
 population <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_pop_2000_2015_cnt[-.0-9]*tif')
 names(population) <- c('pop_2000', 'pop_2005', 'pop_2010', 'pop_2015')
 NAvalue(population) <- -32768
+
+biomass <- raster('biomass.tif')
+names(biomass) <- c('total_biomass')
+extent(biomass) <- extent(covariates_1)
 
 population_growth <- raster('population_growth.tif')
 names(population_growth) <- c('pop_growth')
@@ -254,7 +167,7 @@ stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 
 f <- treatment ~ fc_change + fc_2015 + lc_2015_agriculture + precip + temp + 
     elev + slope + dist_cities + dist_roads + crop_suitability + pop_2015 + 
-    pop_growth + agb
+    pop_growth + total_biomass
 
 save(f, regions, file='inputs.Rdata')
 

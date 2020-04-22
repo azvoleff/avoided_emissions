@@ -64,3 +64,14 @@ fc_change <- overlay(fc_2000, fc_2015,
     })
 writeRaster(fc_change, filename='fc_change.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+
+biomass <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'biomass_above_below_tons[-.0-9]*tif')
+NAvalue(biomass) <- -32768
+names(biomass) <- c('agb', 'bgb')
+overlay(biomass, fun=function(agb, bgb) {
+        agb + bgb
+    },
+    filename='biomass.tif', 
+    overwrite=TRUE,
+    options="COMPRESS=LZW",
+    datatype="INT2S")
