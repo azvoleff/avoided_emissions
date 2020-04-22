@@ -3,21 +3,6 @@ library(dplyr)
 library(sf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
-ae <- read.csv('ae_details.csv')
-st_read("Data/impact_sites.gpkg", layer="impact_sites") %>%
-    tbl_df() %>%
-    select(CI_ID, Country, Star_Tag=Star_Tag_P, Geographic, Area=Area_Name_, Intervention=Interventi) -> sites
-ae$CI_ID <- factor(ae$CI_ID)
-ae <- left_join(ae, sites)
-ae$Intervention <- as.character(ae$Intervention)
-ae$Intervention[ae$Intervention == 'Sustainable Forest Management'] <- 'Sust. Forest Mng.'
-ae$Intervention[ae$Intervention == 'Protected Area (National or Regional)'] <- 'PA'
-ae$Intervention[ae$Intervention == 'Community Based Natural Resource Management'] <- 'CBNRM'
-ae$Intervention[ae$Intervention == 'Coastal Community Fisheries'] <- 'Coastal\nCommunity Fisheries'
-ae$Intervention[ae$Intervention == 'Other Sustainable Fishery'] <- 'Other\nSustainable Fishery'
-ae$Intervention[ae$Intervention == 'Conservation Agreement'] <- 'Conservation\nAgreement'
-ae$Intervention[ae$Intervention == 'Conservation Concessions'] <- 'Conservation\nConcessions'
-ae$Intervention[ae$Intervention == 'Indigenous Land or Water'] <- 'Indigenous\nLand or Water'
 
 # Size of intervention groups
 ae %>%
