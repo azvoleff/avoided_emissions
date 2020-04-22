@@ -2,8 +2,6 @@ library(sf)
 library(tidyverse)
 library(units)
 library(raster)
-library(fasterize)
-library(gdalUtils)
 library(foreach)
 library(optmatch)
 library(mapview)
@@ -11,24 +9,6 @@ library(mapview)
 options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
-
-# Function used to get IDs from a rasterized set of polygons (to determine 
-# which polygons were lost due to rasterization (very small polygons drop out)
-get_unique <- function(x) {
-    bs <- raster::blockSize(x)
-    n_blocks <- bs$n
-    for (block_num in 1:n_blocks) {
-        these_vals <- unique(raster::getValues(x,
-                                               row=bs$row[block_num], 
-                                               nrows=bs$nrows[block_num]))
-        if (block_num == 1) {
-            out <- these_vals
-        } else {
-            out <- unique(c(out, these_vals))
-        }
-    }
-    return (na.omit(out))
-}
 
 # Function to allow rbinding dataframes with foreach even when some dataframes 
 # may not have any rows
@@ -49,71 +29,70 @@ match_ae <- function(d, f) {
     # least one control unit
     d <- d %>%
         filter(complete.cases(.)) %>%
-        group_by(region) %>%
         mutate(n_treatment=sum(treatment),
                n_control=sum(!treatment)) %>%
         filter(n_treatment >= 1, n_control >= 1)
 
     # Note custom combine to handle iterations that don't return any value
-    ret <- foreach (this_region=unique(d$region),
-                    .packages=c('optmatch', 'dplyr'),
-                    .combine=foreach_rbind, .inorder=FALSE) %do% {
-        this_d <- filter(d, region == this_region)
-        d_CI <- filter(this_d, treatment)
-        # Filter out climates and land covers that don't appear in the CI
-        # sample, and drop these levels from the factors
-        this_d <- filter(this_d,
-            biome %in% unique(d_CI$biome),
-            ecoregion %in% unique(d_CI$ecoregion),
-            pa %in% unique(d_CI$pa))
-        this_d$biome <- droplevels(this_d$biome)
-        this_d$ecoregion <- droplevels(this_d$ecoregion)
-        this_d$pa <- droplevels(this_d$pa)
-        # Can't stratify by land cover or climate if they only have one level
-        if (nlevels(this_d$biome) >= 2) {
-            f <- update(f, ~ . + strata(biome))
-        } else {
-            f <- update(f, ~ . - biome)
-        }
-        if (nlevels(this_d$ecoregion) >= 2) {
-            f <- update(f, ~ . + strata(ecoregion))
-        } else {
-            f <- update(f, ~ . - ecoregion)
-        }
-        if (nlevels(this_d$pa) >= 2) {
-            f <- update(f, ~ . + strata(pa))
-        } else {
-            f <- update(f, ~ . - pa)
-        }
-        if (nrow(d_CI) > 2) {
-            model <- glm(f, data=this_d)
-            dists <- match_on(model, data=this_d)
-        } else {
-            # Use Mahalanobis distance if there aren't enough points to run a
-            # glm
-            dists <- match_on(f, data=this_d)
-        }
-        dists <- caliper(dists, 2)
-        # If the controls are too far from the treatments (due to the caliper) 
-        # then the matching may fail. Can test for this by seeing if subdim 
-        # runs successfully
-        subdim_works <- tryCatch(is.data.frame(subdim(dists)),
-                                 error=function(e) return(FALSE))
-        if (subdim_works) {
-            m <- fullmatch(dists, min.controls=1, max.controls=1, data=this_d)
-            this_d <- this_d[matched(m), ]
-        } else {
-            this_d <- data.frame()
-        }
-        # Need to handle the possibility that there were no matches for this 
-        # treatment, meaning this_d will be an empty data.frame
-        if (nrow(this_d) == 0) {
-            return(NULL)
-        } else {
-            return(this_d)
-        }
+    d_CI <- filter(d, treatment)
+    # Filter out climates and land covers that don't appear in the CI
+    # sample, and drop these levels from the factors
+    d <- filter(d,
+        region %in% unique(d_CI$region),
+        biome %in% unique(d_CI$biome),
+        ecoregion %in% unique(d_CI$ecoregion),
+        pa %in% unique(d_CI$pa))
+    d$biome <- droplevels(d$biome)
+    d$ecoregion <- droplevels(d$ecoregion)
+    d$pa <- droplevels(d$pa)
+    # Can't stratify by land cover or climate if they only have one level
+    if (nlevels(d$region) >= 2) {
+        f <- update(f, ~ . + strata(region))
+    } else {
+        f <- update(f, ~ . - region)
     }
-    return(ret)
+    if (nlevels(d$biome) >= 2) {
+        f <- update(f, ~ . + strata(biome))
+    } else {
+        f <- update(f, ~ . - biome)
+    }
+    if (nlevels(d$ecoregion) >= 2) {
+        f <- update(f, ~ . + strata(ecoregion))
+    } else {
+        f <- update(f, ~ . - ecoregion)
+    }
+    if (nlevels(d$pa) >= 2) {
+        f <- update(f, ~ . + strata(pa))
+    } else {
+        f <- update(f, ~ . - pa)
+    }
+    if (nrow(d_CI) > 2) {
+        model <- glm(f, data=d)
+        dists <- match_on(model, data=d)
+    } else {
+        # Use Mahalanobis distance if there aren't enough points to run a
+        # glm
+        dists <- match_on(f, data=d)
+    }
+    dists <- caliper(dists, 2)
+    # If the controls are too far from the treatments (due to the caliper) 
+    # then the matching may fail. Can test for this by seeing if subdim 
+    # runs successfully
+    subdim_works <- tryCatch(is.data.frame(subdim(dists)),
+                             error=function(e) return(FALSE))
+    if (subdim_works) {
+        m <- fullmatch(dists, min.controls=1, max.controls=1, data=d)
+        d <- d[matched(m), ]
+    } else {
+        d <- data.frame()
+    }
+    # Need to handle the possibility that there were no matches for this 
+    # treatment, meaning d will be an empty data.frame
+    if (nrow(d) == 0) {
+        return(NULL)
+    } else {
+        return(d)
+    }
 }
 
 # Basic function to extract variable names from a formula object
@@ -148,7 +127,6 @@ dim(sites)
 
 ###############################################################################
 ###  Run matching
-
 
 ae <- foreach(row_num=21:22,
 #ae <- foreach(row_num=1:nrow(sites),
@@ -230,36 +208,54 @@ ae <- foreach(row_num=21:22,
         return(m %>% dplyr::select(CI_ID, everything()))
     }
 }
+save(ae, file='output_raw_matches.RData')
 
 dplyr::select(sites, CI_ID, CI_Start_Year, CI_End_Year, Intervention, 
               Intervention_1, Intervention_2, Restoration) %>%
     right_join(ae) %>%
     mutate(cell_id=rownames(.)) -> ae
 
+####TEMPORARY
+load('ae_raw.RData')
+####TEMPORARY
+
 # Select initial and final forest cover based on start and end date fields for 
 # each project
-dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, 
+# TODO: need to add in bgb carbon calculation
+dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, agb,
               starts_with('fc_'), -fc_change) %>%
-    gather(year, fc, starts_with('fc_')) %>%
-    mutate(year=as.numeric(str_replace(year, 'fc_', ''))) %>%
+    gather(year, forest_at_year_end, starts_with('fc_')) %>%
+    mutate(year=as.numeric(str_replace(year, 'fc_', '')),
+           CI_End_Year=ifelse(is.na(CI_End_Year), 2099, CI_End_Year)) %>%
+    group_by(cell_id) %>%
+    filter(between(year, CI_Start_Year[1] - 1, CI_End_Year[1])) %>% # include one year prior to project start to get initial forest cover
+    arrange(cell_id, year) %>%
+    mutate(forest_loss_during_year=c(NA, diff(forest_at_year_end)),
+           forest_frac_remaining = forest_at_year_end / forest_at_year_end[1],
+           agb_at_year_end = agb * forest_frac_remaining,
+           C_change=c(NA, diff(agb_at_year_end)) * .5,
+           C_emissions_MgCO2e=C_change * -3.67) -> emissions
+save(emissions, file='output_emissions_raw.Rdata')
+
+emissions %>%
+    filter(year >= CI_Start_Year) %>% # filter out the year prior to project start as no longer needed
+    dplyr::select(cell_id, year, emissions) -> emissions_filtered
+write.csv(emissions, file='output_emissions_filtered.csv', row.names=FALSE)
+
+# TODO:
+# 1) double-check calculations - need a ratio?
+#  to convert biomass to carbon * .5
+#  to convert change in C to CO2e * 3.67
+# 2) what are units of avoided emissions - the agb is biomass above/below in 
+#    tons
+
+
     group_by(cell_id) %>%
     summarise(forest_initial=fc[match(CI_Start_Year[1], year)],
               forest_final=fc[match(CI_End_Year[1], year)]) -> fc
 
-save(ae, file='ae_raw.RData')
 write.csv(ae, file='ae_raw.csv', row.names=FALSE)
 
-# TODO: Need to ensure agb change calculations are based on initial and final 
-# forest cover for correct years for intervention and year of CI sites
-emissions_details <- ae %>%
-    group_by(CI_ID, treatment) %>%
-    summarise(forest_initial=sum(forest_initial, na.rm=TRUE),
-              forest_final=sum(forest_final, na.rm=TRUE),
-              forest_loss = forest_initial - forest_final,
-              agb_initial = sum(agb, na.rm=TRUE),
-              agb_final = agb_initial * ((forest_final - forest_initial)/forest_initial + 1),
-              agb_change = agb_final - agb_initial,
-              n = n())
 write.csv(emissions_details, file='ae_details.csv', row.names=FALSE)
 
 emissions_summary <- emissions_details %>% group_by(CI_ID) %>%
