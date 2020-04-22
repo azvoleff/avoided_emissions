@@ -12,40 +12,6 @@ options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
 
-load('sites.RData')
-dim(sites)
-
-# Filter to only sites over 100 ha
-sites <- sites[!sites$Area_ha < as_units(100, 'hectares'), ]
-dim(sites)
-
-# Select only sites that are not rangeland restoration
-sites$Rangeland <- FALSE
-sites$Rangeland[sites$Restoration == 'Rangeland Restoration'] <- TRUE
-table(sites$Rangeland)
-sites <- sites[!sites$Rangeland, ]
-dim(sites)
-
-load_as_vrt <- function(folder, pattern, band=FALSE, raster=TRUE) {
-    vrt_file <- tempfile(fileext='.vrt')
-    files <- list.files(folder, pattern=pattern)
-    if (length(files) == 0) {
-        stop('No files found')
-    }
-    if (band) {
-        gdalbuildvrt(paste0(folder, '/', files), vrt_file, b=band)
-        r <- raster(vrt_file)
-    } else {
-        gdalbuildvrt(paste0(folder, '/', files), vrt_file)
-        r <- raster::stack(vrt_file)
-    }
-    if (raster) {
-        return(r)
-    } else {
-        return(vrt_file)
-    }
-}
-
 # Function used to get IDs from a rasterized set of polygons (to determine 
 # which polygons were lost due to rasterization (very small polygons drop out)
 get_unique <- function(x) {
@@ -158,111 +124,33 @@ get_names <- function(f) {
 }
 
 ###############################################################################
+###  Load sites and covariates
 
-# Load covariates
-covariates_1 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_01[-.0-9]*tif')
-names(covariates_1) <- c('precip',
-                         'temp',
-                         'elev',
-                         'slope', 
-                         'biome',
-                         'ecoregion')
-NAvalue(covariates_1) <- -32768
+d <- stack('all_covariates.tif')
+names(d) <- read.table('all_covariates_names.txt')$V1
 
-covariates_2 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_02[-.0-9]*tif')
-names(covariates_2) <- c('dist_cities',
-                         'dist_roads',
-                         'travel_cities',
-                         'pa', 
-                         'crop_suitability')
-NAvalue(covariates_2) <- -32768
+# Load f and regions sf data (after normalizing IDs to match rasterization)
+load('inputs.Rdata')
 
-biomass <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'biomass_above_below_tons[-.0-9]*tif')
-names(biomass) <- c('agb', 'bgb')
-NAvalue(biomass) <- -32768
-extent(biomass) <- extent(covariates_1)
+load('sites.RData')
+dim(sites)
 
-population <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_pop_2000_2015_cnt[-.0-9]*tif')
-names(population) <- c('pop_2000', 'pop_2005', 'pop_2010', 'pop_2015')
-NAvalue(population) <- -32768
+# Filter to only sites over 100 ha
+sites <- sites[!sites$Area_ha < as_units(100, 'hectares'), ]
+dim(sites)
 
-population_growth <- raster('population_growth.tif')
-names(population_growth) <- c('pop_growth')
-
-fc_change <- raster('fc_change.tif')
-names(fc_change) <- c('pop_growth')
-extent(fc_change) <- extent(covariates_1)
-
-# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
-
-
-# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
-# names(lc_2001) <- c('lc_2001_forest',
-#                     'lc_2001_grassland',
-#                     'lc_2001_agriculture',
-#                     'lc_2001_wetlands',
-#                     'lc_2001_artificial', 
-#                     'lc_2001_other',
-#                     'lc_2001_water')
-
-lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
-names(lc_2015) <- c('lc_2015_forest',
-                    'lc_2015_grassland',
-                    'lc_2015_agriculture',
-                    'lc_2015_wetlands',
-                    'lc_2015_artificial', 
-                    'lc_2015_other',
-                    'lc_2015_water')
-
-fc00_09 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc00_09_ha[-.0-9]*tif')
-NAvalue(fc00_09) <- -32768
-names(fc00_09) <- c('fc_2000',
-                    'fc_2001',
-                    'fc_2002',
-                    'fc_2003',
-                    'fc_2004',
-                    'fc_2005',
-                    'fc_2006',
-                    'fc_2007',
-                    'fc_2008',
-                    'fc_2009')
-extent(fc00_09) <- extent(covariates_1)
-fc10_18 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_18_ha[-.0-9]*tif')
-NAvalue(fc10_18) <- -32768
-names(fc10_18) <- c('fc_2010',
-                    'fc_2011',
-                    'fc_2012',
-                    'fc_2013',
-                    'fc_2014',
-                    'fc_2015',
-                    'fc_2016',
-                    'fc_2017',
-                    'fc_2018')
-extent(fc10_18) <- extent(covariates_1)
+# Select only sites that are not rangeland restoration
+sites$Rangeland <- FALSE
+sites$Rangeland[sites$Restoration == 'Rangeland Restoration'] <- TRUE
+table(sites$Rangeland)
+sites <- sites[!sites$Rangeland, ]
+dim(sites)
 
 ###############################################################################
-### Load GADM boundaries
-regions <- st_read(paste0(data_folder, "/gadm36_levels_gpkg/gadm36_levels.gpkg"), layer="level1")
-regions$level0_ID <- as.numeric(factor(regions$GID_0))
-regions$level1_ID <- as.numeric(factor(regions$GID_1))
-regions_rast <- fasterize(regions, raster(covariates_1[[1]]),
-                          field='level1_ID')
-region_IDs_after_rasterization <- get_unique(regions_rast)
-regions <- regions[regions$level1_ID %in% region_IDs_after_rasterization, ]
-regions$level0_ID <- as.numeric(factor(as.character(regions$GID_0)))
-regions$level1_ID <- as.numeric(factor(as.character(regions$GID_1)))
-# Now re-rasterize boundaries (with ID's that will disappear dropped) to ensure
-# that all IDs are sequential and that they match between the data.frame and 
-# the raster.
-regions_rast <- fasterize(regions, raster(covariates_1[[1]]),
-                          field='level1_ID')
-names(regions_rast) <- 'region'
-region_IDs_after_rasterization <- get_unique(regions_rast)
-stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
+###  Run matching
 
-# Remember, some places can't be matched on level 2 since they are ALL of level 
-# 2, like the Galapagos for example
-ae <- foreach(row_num=1:10,
+
+ae <- foreach(row_num=21:22,
 #ae <- foreach(row_num=1:nrow(sites),
              .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
              .combine=foreach_rbind) %do% {
@@ -295,39 +183,30 @@ ae <- foreach(row_num=1:10,
 
     # Crop matching vars to the area of interest (the region(s) the site falls 
     # within) and then extract values
-    fc_change_crop <- crop(fc_change, r)
-    fc00_09_crop <- crop(fc00_09, r)
-    fc10_18_crop <- crop(fc10_18, r)
-    lc_2015_crop <- crop(lc_2015, r)
-    cv_1_crop <- crop(covariates_1, r)
-    cv_2_crop <- crop(covariates_2, r)
-    biomass_crop <- crop(biomass, r)
-    pop_crop <- crop(population, r)
-    pop_growth_crop <- crop(population_growth, r)
-    fc_change_crop <- crop(fc_change, r)
-    d <- stack(r, treat_or_control, fc_change_crop, fc00_09_crop, fc10_18_crop, 
-               lc_2015_crop, cv_1_crop, cv_2_crop, biomass_crop, pop_crop, 
-               pop_growth_crop)
+    d <- crop(d, r)
+    d <- stack(r, treat_or_control, d)
 
     # Project all items to cylindrical equal area
-    d_cea <- projectRaster(d, crs=CRS('+proj=cea'), method='ngb')
+    # d<- projectRaster(d, crs=CRS('+proj=cea'), method='ngb')
 
-    vals <- data.frame(getValues(d_cea))
-    vals <- vals[!is.na(vals$treatment), ]
-    vals$treatment <- as.logical(vals$treatment)
-    vals$biome <- as.factor(vals$biome)
-    vals$ecoregion <- as.factor(vals$ecoregion)
-    vals$pa <- as.factor(vals$pa)
+    # Process the pixels in blocks as some regions are large
+    bs <- blockSize(d)
+    m <- foreach (i=1:bs$n) %do% {
+        #vals <- data.frame(getValues(d))
+        vals <- data.frame(getValues(d, row=bs$row[i], nrows=bs$nrows[i]))
+        vals <- vals[!is.na(vals$treatment), ]
+        vals$treatment <- as.logical(vals$treatment)
+        vals$biome <- as.factor(vals$biome)
+        vals$ecoregion <- as.factor(vals$ecoregion)
+        vals$pa <- as.factor(vals$pa)
 
-    # Match on each treatment pixel
-    f <- treatment ~ fc_change + fc_2015 + lc_2015_agriculture + precip + temp + elev + 
-        slope + dist_cities + dist_roads + crop_suitability + pop_2015 + 
-        pop_growth + agb
-    m <- match_ae(vals, f)
+        m <- match_ae(vals, f)
+    }
+
     if (is.null(m)) {
         return(NULL)
     } else {
-        m <- select(m, c(get_names(f),
+        m <- dplyr::select(m, c(get_names(f),
                          'fc_2000',
                          'fc_2001',
                          'fc_2002',
@@ -348,11 +227,24 @@ ae <- foreach(row_num=1:10,
                          'fc_2017',
                          'fc_2018'))
         m$CI_ID <- as.character(p$CI_ID)
-        return(m %>% select(CI_ID, everything()))
+        return(m %>% dplyr::select(CI_ID, everything()))
     }
 }
 
-stop()
+dplyr::select(sites, CI_ID, CI_Start_Year, CI_End_Year, Intervention, 
+              Intervention_1, Intervention_2, Restoration) %>%
+    right_join(ae) %>%
+    mutate(cell_id=rownames(.)) -> ae
+
+# Select initial and final forest cover based on start and end date fields for 
+# each project
+dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, 
+              starts_with('fc_'), -fc_change) %>%
+    gather(year, fc, starts_with('fc_')) %>%
+    mutate(year=as.numeric(str_replace(year, 'fc_', ''))) %>%
+    group_by(cell_id) %>%
+    summarise(forest_initial=fc[match(CI_Start_Year[1], year)],
+              forest_final=fc[match(CI_End_Year[1], year)]) -> fc
 
 save(ae, file='ae_raw.RData')
 write.csv(ae, file='ae_raw.csv', row.names=FALSE)
@@ -361,8 +253,8 @@ write.csv(ae, file='ae_raw.csv', row.names=FALSE)
 # forest cover for correct years for intervention and year of CI sites
 emissions_details <- ae %>%
     group_by(CI_ID, treatment) %>%
-    summarise(forest_initial=sum(forest_2000, na.rm=TRUE),
-              forest_final=sum(forest_2015, na.rm=TRUE),
+    summarise(forest_initial=sum(forest_initial, na.rm=TRUE),
+              forest_final=sum(forest_final, na.rm=TRUE),
               forest_loss = forest_initial - forest_final,
               agb_initial = sum(agb, na.rm=TRUE),
               agb_final = agb_initial * ((forest_final - forest_initial)/forest_initial + 1),

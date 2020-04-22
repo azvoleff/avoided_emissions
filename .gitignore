@@ -1,0 +1,8 @@
+.Rhistory
+*.csv
+*.tif
+*.txt
+*.Rdata
+*.docx
+*.tmp.*
+Data/*

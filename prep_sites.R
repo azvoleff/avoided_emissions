@@ -64,7 +64,7 @@ sites$CI_End_Date_clean <- mdy(sites$CI_End_Date_clean)
 sites$CI_End_Date_clean[sites$CI_End_Date_clean > mdy('12/31/2019')] <- NA
 sites$CI_End_Year <- year(sites$CI_End_Date_clean)
 
-save(sites, sites_cea, file='sites.RData')
+save(sites, file='sites.RData')
 
 # Check for overlaps
 # intersections <- foreach (year in c(2019, 2019)) %do% {
