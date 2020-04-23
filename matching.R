@@ -5,10 +5,27 @@ library(raster)
 library(foreach)
 library(optmatch)
 library(mapview)
+library(doParallel)
+registerDoParallel(4)
     
 options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
+
+gdal_crop <- function(r, s) {
+    if (filename(r) == '') {
+        stop('input raster must have a valid filename')
+    }
+    e <- extent(s)
+    band_names <- names(r)
+    out_file <- tempfile(fileext='.tif')
+    sf::gdal_utils('warp', filename(r), out_file,
+                   options=c('-te', e@xmin, e@ymin, e@xmax, e@ymax, '-multi', 
+                             '-co', 'COMPRESS=LZW'))
+    out_r <- brick(out_file)
+    names(out_r) <- names(r)
+    return(out_r)
+}
 
 # Function to allow rbinding dataframes with foreach even when some dataframes 
 # may not have any rows
@@ -42,6 +59,7 @@ match_ae <- function(d, f) {
         biome %in% unique(d_CI$biome),
         ecoregion %in% unique(d_CI$ecoregion),
         pa %in% unique(d_CI$pa))
+    d$region <- droplevels(d$region)
     d$biome <- droplevels(d$biome)
     d$ecoregion <- droplevels(d$ecoregion)
     d$pa <- droplevels(d$pa)
@@ -105,7 +123,7 @@ get_names <- function(f) {
 ###############################################################################
 ###  Load sites and covariates
 
-d <- stack('all_covariates.tif')
+d <- brick('all_covariates.tif')
 names(d) <- read.table('all_covariates_names.txt')$V1
 
 # Load f and regions sf data (after normalizing IDs to match rasterization)
@@ -127,12 +145,13 @@ dim(sites)
 
 ###############################################################################
 ###  Run matching
-
-ae <- foreach(row_num=21:22,
-#ae <- foreach(row_num=1:nrow(sites),
-             .packages=c('raster', 'rgeos', 'optmatch', 'dplyr', 'foreach'),
-             .combine=foreach_rbind) %do% {
-    print(row_num )
+#ae <- foreach(row_num=21:30,
+writeLines(c(""), "log.txt")
+ae <- foreach(row_num=1:nrow(sites),
+             .packages=c('sf', 'tidyverse', 'optmatch'),
+             .combine=foreach_rbind) %dopar% {
+    sink("log.txt", append=TRUE)
+    print(paste0(row_num, ': Cropping'))
     p <- sites[row_num, ]
     # st_intersects expects planar coords, but approximate match from WGS84 is 
     # fine here since the regions are all much larger than the sites - will 
@@ -144,10 +163,11 @@ ae <- foreach(row_num=21:22,
         # Return no results for these areas.
         return(NULL)
     } else {
-        r <- crop(regions_rast, regions[inter, ])
+        d_crop <- gdal_crop(d, regions[inter, ])
     }
 
-    p_rast <- rasterize(p, r, background=0)
+    print(paste0(row_num, ': Rasterizing and masking'))
+    p_rast <- rasterize(p, d_crop, background=0)
     # Note that the below will drop any portions of a site that don't fall 
     # within a region in GADM- this means that marine areas will be dropped. 
     # Given this calculation is for avoided emissions, likely not a problem... 
@@ -156,31 +176,39 @@ ae <- foreach(row_num=21:22,
     #
     # TODO: Need to ensure we also mask out other areas where CI has ongoing 
     # interventions.
-    treat_or_control <- mask(p_rast, r)
+    treat_or_control <- mask(p_rast, d_crop$region)
     names(treat_or_control) <- 'treatment'
-
-    # Crop matching vars to the area of interest (the region(s) the site falls 
-    # within) and then extract values
-    d <- crop(d, r)
-    d <- stack(r, treat_or_control, d)
+    d_crop <- stack(treat_or_control, d_crop)
 
     # Project all items to cylindrical equal area
-    # d<- projectRaster(d, crs=CRS('+proj=cea'), method='ngb')
+    # d_crop <- projectRaster(d_crop, crs=CRS('+proj=cea'), method='ngb')
 
+    print(paste0(row_num, ': Reading values'))
     # Process the pixels in blocks as some regions are large
-    bs <- blockSize(d)
-    m <- foreach (i=1:bs$n) %do% {
-        #vals <- data.frame(getValues(d))
-        vals <- data.frame(getValues(d, row=bs$row[i], nrows=bs$nrows[i]))
-        vals <- vals[!is.na(vals$treatment), ]
-        vals$treatment <- as.logical(vals$treatment)
-        vals$biome <- as.factor(vals$biome)
-        vals$ecoregion <- as.factor(vals$ecoregion)
-        vals$pa <- as.factor(vals$pa)
-
-        m <- match_ae(vals, f)
+    
+    treatment_vals <- extract(d_crop, p, df=TRUE)
+    treatment_vals <- treatment_vals[names(treatment_vals) != 'ID']
+    print(paste0(row_num, ': ', nrow(treatment_vals), ' treatment cells'))
+    if (ncell(d_crop) < (150 * nrow(treatment_vals))) {
+        print(paste0(row_num, ': Reading all values directly'))
+        vals <- data.frame(getValues(d_crop))
+    } else {
+        print(paste0(row_num, ': Subsampling control points'))
+        control_vals <- as.data.frame(sampleRegular(d_crop, 100 * nrow(treatment_vals), useGDAL=TRUE))
+        control_vals <- dplyr::filter(control_vals, treatment == 0)
+        vals <- rbind(treatment_vals, control_vals)
     }
+    vals <- vals[!is.na(vals$treatment), ]
+    vals$treatment <- as.logical(vals$treatment)
+    vals$region <- as.factor(vals$region)
+    vals$biome <- as.factor(vals$biome)
+    vals$ecoregion <- as.factor(vals$ecoregion)
+    vals$pa <- as.factor(vals$pa)
 
+    print(paste0(row_num, ': Matching'))
+    m <- match_ae(vals, f)
+
+    print(paste0(row_num, ': Formatting output'))
     if (is.null(m)) {
         return(NULL)
     } else {
@@ -205,24 +233,26 @@ ae <- foreach(row_num=21:22,
                          'fc_2017',
                          'fc_2018'))
         m$CI_ID <- as.character(p$CI_ID)
+        m$Data_Year <- p$Data_Year
         return(m %>% dplyr::select(CI_ID, everything()))
     }
 }
-save(ae, file='output_raw_matches.RData')
+#ae_backup <- ae
 
-dplyr::select(sites, CI_ID, CI_Start_Year, CI_End_Year, Intervention, 
+ae <- ae_backup
+dplyr::select(sites, CI_ID, Data_Year, CI_Start_Year, CI_End_Year, Intervention, 
               Intervention_1, Intervention_2, Restoration) %>%
     right_join(ae) %>%
     mutate(cell_id=rownames(.)) -> ae
+save(ae, file='output_raw_matches.RData')
 
 ####TEMPORARY
-load('ae_raw.RData')
+load('output_raw_matches.RData')
 ####TEMPORARY
 
 # Select initial and final forest cover based on start and end date fields for 
 # each project
-# TODO: need to add in bgb carbon calculation
-dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, agb,
+dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, total_biomass,
               starts_with('fc_'), -fc_change) %>%
     gather(year, forest_at_year_end, starts_with('fc_')) %>%
     mutate(year=as.numeric(str_replace(year, 'fc_', '')),
@@ -232,35 +262,22 @@ dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, agb,
     arrange(cell_id, year) %>%
     mutate(forest_loss_during_year=c(NA, diff(forest_at_year_end)),
            forest_frac_remaining = forest_at_year_end / forest_at_year_end[1],
-           agb_at_year_end = agb * forest_frac_remaining,
-           C_change=c(NA, diff(agb_at_year_end)) * .5,
-           C_emissions_MgCO2e=C_change * -3.67) -> emissions
-save(emissions, file='output_emissions_raw.Rdata')
+           biomass_at_year_end = total_biomass * forest_frac_remaining,
+           #  to convert biomass to carbon * .5
+           C_change=c(NA, diff(biomass_at_year_end)) * .5,
+           #  to convert change in C to CO2e * 3.67
+           C_emissions_MgCO2e=C_change * -3.67) -> e
+save(e, file='output_emissions_raw.Rdata')
 
-emissions %>%
+e %>%
     filter(year >= CI_Start_Year) %>% # filter out the year prior to project start as no longer needed
-    dplyr::select(cell_id, year, emissions) -> emissions_filtered
-write.csv(emissions, file='output_emissions_filtered.csv', row.names=FALSE)
+    dplyr::select(cell_id, CI_ID, Data_Year, year, C_emissions_MgCO2e) -> e
+save(e, file='output_emissions_filtered.RData')
 
-# TODO:
-# 1) double-check calculations - need a ratio?
-#  to convert biomass to carbon * .5
-#  to convert change in C to CO2e * 3.67
-# 2) what are units of avoided emissions - the agb is biomass above/below in 
-#    tons
-
-
-    group_by(cell_id) %>%
-    summarise(forest_initial=fc[match(CI_Start_Year[1], year)],
-              forest_final=fc[match(CI_End_Year[1], year)]) -> fc
-
-write.csv(ae, file='ae_raw.csv', row.names=FALSE)
-
-write.csv(emissions_details, file='ae_details.csv', row.names=FALSE)
-
-emissions_summary <- emissions_details %>% group_by(CI_ID) %>%
-        summarise(forest_loss_ha_treat_minus_control=forest_loss[treatment] - forest_loss[!treatment],
-                  agb_loss_treat_minus_control=agb_change[treatment] - agb_change[!treatment],
-                  n_treatment = n[treatment],
-                  n_control = n[!treatment])
-write.csv(emissions_summary, file='ae_summary.csv', row.names=FALSE)
+e %>% group_by(CI_ID, Data_Year) %>%
+    summarise(forest_loss_ha_treat_minus_control=sum(forest_loss_during_year[treatment]) - sum(forest_loss_during_year[!treatment]),
+              C_emissions_MgCO2e_treat_minus_control=sum(C_emissions_MgCO2e[treatment]) - sum(C_emissions_MgCO2e[!treatment]),
+              n_treatment = n[treatment],
+              n_control = n[!treatment]) -> e_avoided
+save(e, file='output_emissions_avoided.RData')
+write.csv(e, file='output_emissions_avoided.csv', row.names=FALSE)
