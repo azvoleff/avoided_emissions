@@ -26,6 +26,7 @@ table(sites_cea$area_cea < as_units(100, 'hectares'))
 
 sites %>%
     select(CI_ID,
+           Data_Year=data_year,
            Country,
            Star_Tag=Star_Tag_P,
            Geographic,
