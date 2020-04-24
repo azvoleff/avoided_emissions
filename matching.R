@@ -6,7 +6,10 @@ library(foreach)
 library(optmatch)
 library(mapview)
 library(doParallel)
-registerDoParallel(4)
+#registerDoParallel(4)
+
+
+MAX_TREATMENT <- 2000
     
 options("optmatch_max_problem_size"=Inf)
 
@@ -145,14 +148,22 @@ dim(sites)
 
 ###############################################################################
 ###  Run matching
-#ae <- foreach(row_num=21:30,
-writeLines(c(""), "log.txt")
+set.seed(31)
+# message_log <- file("log_message.txt", 'w')
+# output_log <- file("log_output.txt", 'w')
 ae <- foreach(row_num=1:nrow(sites),
-             .packages=c('sf', 'tidyverse', 'optmatch'),
-             .combine=foreach_rbind) %dopar% {
-    sink("log.txt", append=TRUE)
-    print(paste0(row_num, ': Cropping'))
+             .packages=c('sf', 'tidyverse', 'optmatch', 'raster'),
+             .combine=foreach_rbind, .inorder=FALSE) %do% {
     p <- sites[row_num, ]
+    CI_ID <- as.character(p$CI_ID)
+    Data_Year <- p$Data_Year
+    if (file.exists(paste0('Output/m_', CI_ID, '_', Data_Year, '.RData'))) {
+        print(paste('Skipping', CI_ID, Data_Year))
+        next
+    }
+    # sink(output_log, append=TRUE, type='output')
+    # sink(message_log, append=TRUE, type="message")
+    print(paste0(row_num, ': Cropping'))
     # st_intersects expects planar coords, but approximate match from WGS84 is 
     # fine here since the regions are all much larger than the sites - will 
     # convert to CEA later when it matters
@@ -189,11 +200,23 @@ ae <- foreach(row_num=1:nrow(sites),
     treatment_vals <- extract(d_crop, p, df=TRUE)
     treatment_vals <- treatment_vals[names(treatment_vals) != 'ID']
     print(paste0(row_num, ': ', nrow(treatment_vals), ' treatment cells'))
-    if (ncell(d_crop) < (150 * nrow(treatment_vals))) {
-        print(paste0(row_num, ': Reading all values directly'))
+
+    ###
+    # Sample the treatment cells if there are more than MAX_TREATMENT
+    if (nrow(treatment_vals) > MAX_TREATMENT) {
+        print(paste0(row_num, ': sampling treatment cells'))
+        treatment_vals <- sample_n(treatment_vals, MAX_TREATMENT)
+    }
+    ###
+    # Sample the control cells if there are more than 100*MAX_TREATMENT
+    #
+    # Note the below factor is set slightly higher than the one used with 
+    # sampling to ensure that there are enough cells to sample from
+    if (ncell(d_crop) < (120 * nrow(treatment_vals))) {
+        print(paste0(row_num, ': using all possible control points'))
         vals <- data.frame(getValues(d_crop))
     } else {
-        print(paste0(row_num, ': Subsampling control points'))
+        print(paste0(row_num, ': sampling control points'))
         control_vals <- as.data.frame(sampleRegular(d_crop, 100 * nrow(treatment_vals), useGDAL=TRUE))
         control_vals <- dplyr::filter(control_vals, treatment == 0)
         vals <- rbind(treatment_vals, control_vals)
@@ -232,27 +255,24 @@ ae <- foreach(row_num=1:nrow(sites),
                          'fc_2016',
                          'fc_2017',
                          'fc_2018'))
-        m$CI_ID <- as.character(p$CI_ID)
-        m$Data_Year <- p$Data_Year
-        return(m %>% dplyr::select(CI_ID, everything()))
+        m$CI_ID <- CI_ID
+        m$Data_Year <- Data_Year
+        m <- m %>% dplyr::select(CI_ID, everything())
+        save(m, file=paste0('Output/m_', CI_ID, '_', Data_Year, '.RData'))
+        return(m)
     }
 }
-#ae_backup <- ae
 
-ae <- ae_backup
 dplyr::select(sites, CI_ID, Data_Year, CI_Start_Year, CI_End_Year, Intervention, 
               Intervention_1, Intervention_2, Restoration) %>%
     right_join(ae) %>%
     mutate(cell_id=rownames(.)) -> ae
 save(ae, file='output_raw_matches.RData')
 
-####TEMPORARY
-load('output_raw_matches.RData')
-####TEMPORARY
-
 # Select initial and final forest cover based on start and end date fields for 
 # each project
-dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, total_biomass,
+dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year, 
+              CI_End_Year, total_biomass,
               starts_with('fc_'), -fc_change) %>%
     gather(year, forest_at_year_end, starts_with('fc_')) %>%
     mutate(year=as.numeric(str_replace(year, 'fc_', '')),
@@ -269,15 +289,9 @@ dplyr::select(as.data.frame(ae), cell_id, CI_Start_Year, CI_End_Year, total_biom
            C_emissions_MgCO2e=C_change * -3.67) -> e
 save(e, file='output_emissions_raw.Rdata')
 
-e %>%
+as.data.frame(e) %>% group_by(CI_ID, Data_Year) %>%
     filter(year >= CI_Start_Year) %>% # filter out the year prior to project start as no longer needed
-    dplyr::select(cell_id, CI_ID, Data_Year, year, C_emissions_MgCO2e) -> e
-save(e, file='output_emissions_filtered.RData')
-
-e %>% group_by(CI_ID, Data_Year) %>%
-    summarise(forest_loss_ha_treat_minus_control=sum(forest_loss_during_year[treatment]) - sum(forest_loss_during_year[!treatment]),
-              C_emissions_MgCO2e_treat_minus_control=sum(C_emissions_MgCO2e[treatment]) - sum(C_emissions_MgCO2e[!treatment]),
-              n_treatment = n[treatment],
-              n_control = n[!treatment]) -> e_avoided
-save(e, file='output_emissions_avoided.RData')
-write.csv(e, file='output_emissions_avoided.csv', row.names=FALSE)
+    summarise(forest_loss_ha_treat_minus_control=sum(forest_loss_during_year[treatment], na.rm=TRUE) - sum(forest_loss_during_year[!treatment], na.rm=TRUE),
+              C_emissions_MgCO2e_treat_minus_control=sum(C_emissions_MgCO2e[treatment], na.rm=TRUE) - sum(C_emissions_MgCO2e[!treatment], na.rm=TRUE)) -> e_avoided
+save(e_avoided, file='output_emissions_avoided.RData')
+write.csv(e_avoided, file='output_emissions_avoided.csv', row.names=FALSE)
