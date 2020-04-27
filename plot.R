@@ -24,14 +24,14 @@ ae <- foreach(f=list.files('Output'), .combine=foreach_rbind) %do% {
     load(paste0('Output/', f))
     return(m)
 }
+
+# Join the site data to the tibble
 dplyr::select(sites, CI_ID, Data_Year, CI_Start_Year, CI_End_Year, Intervention, 
               Intervention_1, Intervention_2, Restoration) %>%
     right_join(ae) %>%
     mutate(cell_id=rownames(.)) -> ae
-save(ae, file='output_raw_matches.RData')
 
-# Select initial and final forest cover based on start and end date fields for 
-# each project
+# Calculate emissiosn for each year
 dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year, 
               CI_End_Year, total_biomass,
               starts_with('fc_'), -fc_change) %>%
@@ -47,19 +47,41 @@ dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year,
            #  to convert biomass to carbon * .5
            C_change=c(NA, diff(biomass_at_year_end)) * .5,
            #  to convert change in C to CO2e * 3.67
-           C_emissions_MgCO2e=C_change * -3.67) -> e
-save(e, file='output_emissions_raw.Rdata')
+           Emissions_MgCO2e=C_change * -3.67) -> ae
 
-as.data.frame(e) %>%
+# Calculate avoided emissiosn for each year for each site
+as.data.frame(ae) %>%
+    group_by(CI_ID, Data_Year, year, treatment) %>%
+    filter(between(year, CI_Start_Year[1], CI_End_Year[1])) %>% # filter out the year prior to project start as no longer needed
+    summarise(CI_Start_Year=CI_Start_Year[1],
+              CI_End_Year=CI_End_Year[1],
+              forest_loss_ha=sum(forest_loss_during_year, na.rm=TRUE),
+              Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE)) %>%
     group_by(CI_ID, Data_Year, year) %>%
-    filter(between(year, CI_Start_Year, CI_End_Year)) %>% # filter out the year prior to project start as no longer needed
-    summarise(forest_loss_ha_treat_minus_control=sum(forest_loss_during_year[treatment], na.rm=TRUE) - sum(forest_loss_during_year[!treatment], na.rm=TRUE),
-              C_emissions_MgCO2e_treat_minus_control=sum(C_emissions_MgCO2e[treatment], na.rm=TRUE) - sum(C_emissions_MgCO2e[!treatment], na.rm=TRUE)) -> e_avoided
-save(e_avoided, file='output_emissions_avoided.RData')
-write.csv(e_avoided, file='output_emissions_avoided.csv', row.names=FALSE)
+    summarise(CI_Start_Year=CI_Start_Year[1],
+              CI_End_Year=CI_End_Year[1],
+              forest_loss_ha_CI_minus_control=forest_loss_ha[treatment] - forest_loss_ha[!treatment],
+              Emissions_MgCO2e_CI_minus_control=Emissions_MgCO2e[treatment] - Emissions_MgCO2e[!treatment]) -> ae_site
+save(ae_site, file='output_emissions_avoided.Rdata')
+write_csv(ae_site, path='output_emissions_avoided.csv')
+
+ae_site %>%
+    select(-forest_loss_ha_CI_minus_control)%>%
+    pivot_wider(names_from=year,
+                values_from=Emissions_MgCO2e_CI_minus_control,
+                names_prefix='MgCO2e_vs_control_') %>%
+    select(order(colnames(.))) -> ae_site_wide
+save(ae_site_wide, file='output_emissions_avoided_wide.Rdata')
+write_csv(ae_site_wide, path='output_emissions_avoided_wide.csv')
+
+ae_site %>%
+    group_by(CI_ID, Data_Year) %>%
+    summarise(Emissions_MgCO2e_CI_minus_control=sum(Emissions_MgCO2e_CI_minus_control)) -> ae_site_alltime
+save(ae_site_alltime, file='output_emissions_avoided_life_of_project.Rdata')
+write_csv(ae_site_alltime, path='output_emissions_avoided_life_of_project.csv')
 
 # Size of intervention groups
-ae %>%
+ae_site %>%
     group_by(Intervention) %>%
     summarise(n=length(unique(CI_ID))) %>%
     ggplot() +
