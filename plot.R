@@ -16,8 +16,6 @@ foreach_rbind <- function(d1, d2) {
     }
 }
 
-data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
-
 load('sites.RData')
 
 ae <- foreach(f=list.files('Output'), .combine=foreach_rbind) %do% {
@@ -25,15 +23,24 @@ ae <- foreach(f=list.files('Output'), .combine=foreach_rbind) %do% {
     return(m)
 }
 
+ae %>%
+    group_by(CI_ID) %>%
+    summarise(sampled_fraction=sampled_fraction[1]) %>%
+    ggplot(aes(sampled_fraction)) +
+    geom_histogram() +
+    xlab('Fraction of site used in sample') + ylab('Number of sites') +
+    theme_bw(base_size=18)
+ggsave('output_emissions_avoided_fraction_sampled.png', width=10, height=6)
+
 # Join the site data to the tibble
 dplyr::select(sites, CI_ID, Data_Year, CI_Start_Year, CI_End_Year, Intervention, 
               Intervention_1, Intervention_2, Restoration) %>%
     right_join(ae) %>%
     mutate(cell_id=rownames(.)) -> ae
 
-# Calculate emissiosn for each year
-dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year, 
-              CI_End_Year, total_biomass,
+# Calculate emissions for each year
+dplyr::select(ae, cell_id, treatment, sampled_fraction, CI_ID, Data_Year, 
+              CI_Start_Year, CI_End_Year, total_biomass, sampled_fraction, 
               starts_with('fc_'), -fc_change) %>%
     gather(year, forest_at_year_end, starts_with('fc_')) %>%
     mutate(year=as.numeric(str_replace(year, 'fc_', '')),
@@ -41,7 +48,9 @@ dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year,
     group_by(cell_id) %>%
     filter(between(year, CI_Start_Year[1] - 1, CI_End_Year[1])) %>% # include one year prior to project start to get initial forest cover
     arrange(cell_id, year) %>%
-    mutate(forest_loss_during_year=c(NA, diff(forest_at_year_end)),
+    mutate(forest_at_year_end=forest_at_year_end  * (1 / sampled_fraction), # Correct for only having a sample
+           total_biomass=total_biomass * (1 / sampled_fraction), # Correct for only having a sample
+           forest_loss_during_year=c(NA, diff(forest_at_year_end)),
            forest_frac_remaining = forest_at_year_end / forest_at_year_end[1],
            biomass_at_year_end = total_biomass * forest_frac_remaining,
            #  to convert biomass to carbon * .5
@@ -49,14 +58,16 @@ dplyr::select(ae, cell_id, treatment, CI_ID, Data_Year, CI_Start_Year,
            #  to convert change in C to CO2e * 3.67
            Emissions_MgCO2e=C_change * -3.67) -> ae
 
-# Calculate avoided emissiosn for each year for each site
+# Calculate avoided emissions for each year for each site
 as.data.frame(ae) %>%
     group_by(CI_ID, Data_Year, year, treatment) %>%
     filter(between(year, CI_Start_Year[1], CI_End_Year[1])) %>% # filter out the year prior to project start as no longer needed
     summarise(CI_Start_Year=CI_Start_Year[1],
               CI_End_Year=CI_End_Year[1],
-              forest_loss_ha=sum(forest_loss_during_year, na.rm=TRUE),
-              Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE)) %>%
+              # correct totals for areas where only a partial sample was used 
+              # by taking into account the fraction sampled
+              forest_loss_ha=sum(forest_loss_during_year, na.rm=TRUE) * (1 / sampled_fraction[1]),
+              Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE) * (1 / sampled_fraction[1])) %>%
     group_by(CI_ID, Data_Year, year) %>%
     summarise(CI_Start_Year=CI_Start_Year[1],
               CI_End_Year=CI_End_Year[1],
@@ -69,10 +80,32 @@ ae_site %>%
     select(-forest_loss_ha_CI_minus_control)%>%
     pivot_wider(names_from=year,
                 values_from=Emissions_MgCO2e_CI_minus_control,
-                names_prefix='MgCO2e_vs_control_') %>%
+                names_prefix='c_oavoid_') %>%
+    mutate(c_oavoid=c_oavoid_2018) %>% # Duplicate the c_oavoid column as requested
     select(order(colnames(.))) -> ae_site_wide
 save(ae_site_wide, file='output_emissions_avoided_wide.Rdata')
 write_csv(ae_site_wide, path='output_emissions_avoided_wide.csv')
+
+table(ae_site_wide$c_oavoid_2018 > 0)
+summary(ae_site_wide$c_oavoid_2018)
+sum(ae_site_wide$c_oavoid_2018)
+
+ae_site_wide %>%
+    ggplot() +
+    geom_histogram(aes(c_oavoid_2018)) +
+    ylab('Number of sites') + xlab('Avoided emissions (negative is good)') +
+    theme_bw(base_size=18)
+ggsave('output_emissions_avoided_all.png', width=10, height=6)
+
+ae_site_wide %>%
+    filter(c_oavoid > -1e5) %>%
+    filter(c_oavoid < 1e5) %>%
+    ggplot() +
+    geom_histogram(aes(c_oavoid_2018)) +
+    ylab('Number of sites') + xlab('Avoided emissions (negative is good)') +
+    theme_bw(base_size=18)
+ggsave('output_emissions_avoided_all_filter.png', width=10, height=6)
+
 
 ae_site %>%
     group_by(CI_ID, Data_Year) %>%

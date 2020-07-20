@@ -59,11 +59,9 @@ match_ae <- function(d, f) {
     # sample, and drop these levels from the factors
     d <- filter(d,
         region %in% unique(d_CI$region),
-        biome %in% unique(d_CI$biome),
         ecoregion %in% unique(d_CI$ecoregion),
         pa %in% unique(d_CI$pa))
     d$region <- droplevels(d$region)
-    d$biome <- droplevels(d$biome)
     d$ecoregion <- droplevels(d$ecoregion)
     d$pa <- droplevels(d$pa)
     # Can't stratify by land cover or climate if they only have one level
@@ -71,11 +69,6 @@ match_ae <- function(d, f) {
         f <- update(f, ~ . + strata(region))
     } else {
         f <- update(f, ~ . - region)
-    }
-    if (nlevels(d$biome) >= 2) {
-        f <- update(f, ~ . + strata(biome))
-    } else {
-        f <- update(f, ~ . - biome)
     }
     if (nlevels(d$ecoregion) >= 2) {
         f <- update(f, ~ . + strata(ecoregion))
@@ -201,8 +194,6 @@ ae <- foreach(row_num=1:nrow(sites),
     # d_crop <- projectRaster(d_crop, crs=CRS('+proj=cea'), method='ngb')
 
     print(paste0(row_num, ': Reading values'))
-    # Process the pixels in blocks as some regions are large
-    
     treatment_vals <- extract(d_crop, p, df=TRUE)
     treatment_vals <- treatment_vals[names(treatment_vals) != 'ID']
     n_treatment_cells_total <- nrow(treatment_vals)
@@ -238,7 +229,6 @@ ae <- foreach(row_num=1:nrow(sites),
     print(paste0(row_num, ': ', nrow(vals), ' total cells in matching'))
     vals$treatment <- as.logical(vals$treatment)
     vals$region <- as.factor(vals$region)
-    vals$biome <- as.factor(vals$biome)
     vals$ecoregion <- as.factor(vals$ecoregion)
     vals$pa <- as.factor(vals$pa)
 

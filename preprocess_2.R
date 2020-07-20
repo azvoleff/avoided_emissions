@@ -177,7 +177,6 @@ d <- stack(fc00_09, fc10_18, lc_2015, covariates_1, covariates_2, biomass,
 # passed around)
 d <- d[[c(get_names(f),
           'region',
-          'biome',
           'ecoregion',
           'pa',
           'fc_2000',
