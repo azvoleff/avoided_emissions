@@ -46,9 +46,9 @@ writeRaster(population_growth, filename='population_growth.tif',
 fc00_09 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc00_09_ha[-.0-9]*tif')
 NAvalue(fc00_09) <- -32768
 fc_2000 <- stack(fc00_09[[1]])
-fc10_18 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_18_ha[-.0-9]*tif')
-NAvalue(fc10_18) <- -32768
-fc_2015 <- stack(fc10_18[[9]])
+fc10_19 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_19_ha[-.0-9]*tif')
+NAvalue(fc10_19) <- -32768
+fc_2015 <- stack(fc10_19[[9]])
 
 fc_change <- overlay(fc_2000, fc_2015,
     fun=function(fc_2000, fc_2015) {
