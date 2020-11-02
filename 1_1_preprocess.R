@@ -1,10 +1,6 @@
-library(sf)
-library(tidyverse)
-library(raster)
-library(fasterize)
 library(gdalUtils)
-library(foreach)
-    
+library(raster)
+
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
 
 load_as_vrt <- function(folder, pattern, band=FALSE, raster=TRUE) {
@@ -27,156 +23,65 @@ load_as_vrt <- function(folder, pattern, band=FALSE, raster=TRUE) {
     }
 }
 
-# Function used to get IDs from a rasterized set of polygons (to determine 
-# which polygons were lost due to rasterization (very small polygons drop out)
-get_unique <- function(x) {
-    bs <- raster::blockSize(x)
-    n_blocks <- bs$n
-    for (block_num in 1:n_blocks) {
-        these_vals <- unique(raster::getValues(x,
-                                               row=bs$row[block_num], 
-                                               nrows=bs$nrows[block_num]))
-        if (block_num == 1) {
-            out <- these_vals
-        } else {
-            out <- unique(c(out, these_vals))
-        }
-    }
-    return (na.omit(out))
-}
-
-# Basic function to extract variable names from a formula object
-get_names <- function(f) {
-    f <- paste0(as.character(f), collapse=' ')
-    vars <- strsplit(f, split='[+ ~]')[[1]]
-    vars[vars != '']
-}
-
-###############################################################################
-
-# Load covariates
-covariates_1 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_01[-.0-9]*tif')
-names(covariates_1) <- c('precip',
-                         'temp',
-                         'elev',
-                         'slope', 
-                         'biome',
-                         'ecoregion')
-NAvalue(covariates_1) <- -32768
-
-covariates_2 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_covariates_02[-.0-9]*tif')
-names(covariates_2) <- c('dist_cities',
-                         'dist_roads',
-                         'travel_cities',
-                         'pa', 
-                         'crop_suitability')
-NAvalue(covariates_2) <- -32768
-
 population <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_pop_2000_2015_cnt[-.0-9]*tif')
 names(population) <- c('pop_2000', 'pop_2005', 'pop_2010', 'pop_2015')
 NAvalue(population) <- -32768
-
-biomass <- raster('biomass.tif')
-names(biomass) <- c('total_biomass')
-extent(biomass) <- extent(covariates_1)
-
-population_growth <- raster('population_growth.tif')
-names(population_growth) <- c('pop_growth')
-
-covariates <- stack(covariates_1, covariates_2, biomass, population, 
-                    population_growth)
-writeRaster(covariates, filename='covariates_covariates.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
-
-fc_change <- brick('fc_change.tif')
-extent(fc_change) <- extent(covariates_1)
-names(fc_change) <- c(paste0('fcc_0', seq(0, 9)),
-                      paste0('fcc_', seq(10, 19)))
-writeRaster(fc_change, filename='covariates_fc_change.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
-
-# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
-
-
-# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
-# names(lc_2001) <- c('lc_2001_forest',
-#                     'lc_2001_grassland',
-#                     'lc_2001_agriculture',
-#                     'lc_2001_wetlands',
-#                     'lc_2001_artificial', 
-#                     'lc_2001_other',
-#                     'lc_2001_water')
-
-lc_2015 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2015_ha[-.0-9]*tif')
-names(lc_2015) <- c('lc_2015_forest',
-                    'lc_2015_grassland',
-                    'lc_2015_agriculture',
-                    'lc_2015_wetlands',
-                    'lc_2015_artificial', 
-                    'lc_2015_other',
-                    'lc_2015_water')
-writeRaster(lc_2015, filename='covariates_lc_2015.tif', 
+population_growth <- overlay(population$pop_2000, population$pop_2015,
+                             fun=function(pop_2000, pop_2015) {
+                                r = ((pop_2015/pop_2000)^(1/15)-1) * 100
+                                # Set growth to zero when 2000 and 2015 
+                                # populations are equal
+                                r[pop_2000 == pop_2015] <- 0
+                                # Set growth rate to maximum of other 
+                                # pixels for areas that grew from zero 
+                                # population in 2000.
+                                isinfs <- is.infinite(r)
+                                r[isinfs] <- 0
+                                r[isinfs] <- max(r, na.rm=TRUE)
+                                r
+                             })
+writeRaster(population_growth, filename='population_growth.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
 
 fc00_09 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc00_09_ha[-.0-9]*tif')
 NAvalue(fc00_09) <- -32768
-names(fc00_09) <- paste0('fc_0', seq(0, 9))
-extent(fc00_09) <- extent(covariates_1)
-
+fc_2000 <- stack(fc00_09[[1]])
 fc10_19 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc10_19_ha[-.0-9]*tif')
 NAvalue(fc10_19) <- -32768
-names(fc10_19) <- paste0('fc_', seq(10, 19))
-extent(fc10_19) <- extent(covariates_1)
+fc <- stack(fc00_09, fc10_19)
+b <- brick(fc, values=FALSE)  
+names(b) <- c(paste0('fcc_0', seq(0, 9)),
+              paste0('fcc_', seq(10, 19)))
+b <- writeStart(b, filename="fc_change.tif", overwrite=TRUE,
+                options="COMPRESS=LZW", datatype="INT2S")
+bs <- raster::blockSize(b)
+n_blocks <- bs$n
+block_num <- 500
+pb <- pbCreate(bs$n)
+for (block_num in 1:n_blocks) {
+    v <- getValuesBlock(fc, row=bs$row[block_num], nrows=bs$nrows[block_num])
+    # fc_2000 is the first column of v, with other columns being subsequent 
+    # years. So divide each column by that first column and then convert to 
+    # percent change in forest cover
+    v <- ((v  - v[, 1])/ v[, 1]) * 100
+    # Set growth rate to maximum of other pixels for areas that grew from zero 
+    # forest cover in 2000.
+    isinfs <- is.infinite(v)
+    v[isinfs] <- 0
+    v[isinfs] <- max(v, na.rm=TRUE)
+    b <- writeValues(b, v, bs$row[block_num])
+    pbStep(pb, block_num)
+}
+b <- writeStop(b)
+pbClose(pb)
 
-fc <- stack(fc00_09, fc00_09)
-writeRaster(fc, filename='covariates_fc.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
-
-###############################################################################
-### Load GADM boundaries
-regions <- st_read(paste0(data_folder, "/gadm36_levels_gpkg/gadm36_levels.gpkg"), layer="level1")
-regions$level0_ID <- as.numeric(factor(regions$GID_0))
-regions$level1_ID <- as.numeric(factor(regions$GID_1))
-regions_rast <- fasterize(regions, raster(covariates_1[[1]]),
-                          field='level1_ID')
-region_IDs_after_rasterization <- get_unique(regions_rast)
-regions <- regions[regions$level1_ID %in% region_IDs_after_rasterization, ]
-
-
-regions$level0_ID <- as.numeric(factor(as.character(regions$GID_0)))
-regions$level1_ID <- as.numeric(factor(as.character(regions$GID_1)))
-# Now re-rasterize boundaries (with ID's that will disappear dropped) to ensure
-# that all IDs are sequential and that they match between the data.frame and 
-# the raster.
-regions_rast <- fasterize(regions, raster(covariates_1[[1]]),
-                          field='level1_ID')
-names(regions_rast) <- 'region'
-region_IDs_after_rasterization <- get_unique(regions_rast)
-stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
-saveRDS(regions, file='regions.RDS')
-
-###############################################################################
-### Final data setup
-
-f <- treatment ~ lc_2015_agriculture + precip + temp + 
-    elev + slope + dist_cities + dist_roads + crop_suitability + pop_2015 + 
-    pop_growth + total_biomass
-
-saveRDS(f, file='formula.RDS')
-
-d <- stack(covariates_1, covariates_2, 
-           biomass, population, population_growth, regions_rast)
-# Ensure only layers in the formula are included (so extra data isn't being 
-# passed around)
-d <- d[[c(get_names(f),
-          'region',
-          'ecoregion',
-          'pa',
-           paste0('fc_0', seq(0, 9)),
-           paste0('fc_', seq(10, 19)),
-           paste0('fcc_0', seq(0, 9)),
-           paste0('fcc_', seq(10, 19)))]]
-write.table(names(d), file='all_covariates_names.txt', row.names=FALSE, 
-            col.names=FALSE)
-writeRaster(d, filename='all_covariates.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+biomass <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'biomass_above_below_tons[-.0-9]*tif')
+NAvalue(biomass) <- -32768
+names(biomass) <- c('agb', 'bgb')
+overlay(biomass, fun=function(agb, bgb) {
+        agb + bgb
+    },
+    filename='biomass.tif', 
+    overwrite=TRUE,
+    options="COMPRESS=LZW",
+    datatype="INT2S")
