@@ -262,7 +262,8 @@ ae <- foreach(row_num=1:nrow(sites),
                              'fc_2015',
                              'fc_2016',
                              'fc_2017',
-                             'fc_2018'))
+                             'fc_2018',
+                             'fc_2019'))
             m$CI_ID <- CI_ID
             m$Data_Year <- Data_Year
             m <- m %>% dplyr::select(CI_ID, everything())

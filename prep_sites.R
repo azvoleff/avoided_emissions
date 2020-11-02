@@ -7,15 +7,15 @@ library(lubridate)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
 
-sites_2018 <- st_read(paste0(data_folder, "/Impact_Sites/CiImpact2018_CiId_1.shp"))
+sites_2018 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2018.shp"))
 sites_2018 <- st_zm(sites_2018, drop=TRUE)
 sites_2018$data_year <- 2018
 
-sites_2019 <- st_read(paste0(data_folder, "/Impact_Sites/CiImpact2019_CiId_1.shp"))
+sites_2019 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2019.shp"))
 sites_2019 <- st_zm(sites_2019, drop=TRUE)
 sites_2019$data_year <- 2019
 
-sites_2020 <- st_read(paste0(data_folder, "/Impact_Sites/CiImpact2020_CiId_1.shp"))
+sites_2020 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2020.shp"))
 sites_2020 <- st_zm(sites_2020, drop=TRUE)
 sites_2020$data_year <- 2020
 
