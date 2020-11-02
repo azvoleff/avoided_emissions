@@ -1,3 +1,4 @@
+library(fasterize)
 library(sf)
 library(tidyverse)
 library(units)
@@ -7,7 +8,6 @@ library(optmatch)
 library(mapview)
 library(doParallel)
 #registerDoParallel(4)
-
 
 MAX_TREATMENT <- 2000
     
@@ -117,15 +117,39 @@ get_names <- function(f) {
 }
 
 ###############################################################################
+### Final data setup
+
+f <- treatment ~ lc_2015_agriculture + precip + temp + elev + slope + 
+    dist_cities + dist_roads + crop_suitability + pop_2015 + pop_growth + 
+    total_biomass
+
+covariates <- brick('covariates_covariates.tif')
+names(covariates) <- read_csv('covariates_covariates.csv')$names
+lc_2015 <- brick('covariates_lc_2015.tif')
+names(lc_2015) <- read_csv('covariates_lc_2015.csv')$names
+# fc <- brick('covariates_fc.tif')
+# names(fc) <- read_csv('covariates_fc.csv')$names
+fc_change <- brick('covariates_fc_change.tif')
+names(fc_change) <- read_csv('covariates_fc_change.csv')$names
+
+#d <- stack(covariates, lc_2015, fc, fc_change)
+d <- stack(covariates, lc_2015, fc_change)
+# Ensure only layers in the formula are included (so extra data isn't being 
+# passed around)
+d <- d[[c(get_names(f),
+          'region',
+          'ecoregion',
+          'pa',
+           paste0('fc_0', seq(0, 9)),
+           paste0('fc_', seq(10, 19)),
+           paste0('fcc_0', seq(0, 9)),
+           paste0('fcc_', seq(10, 19)))]]
+write_csv(data.frame(names=names(d)), file='all_covariates_names.csv')
+
+###############################################################################
 ###  Load sites and covariates
 
-d <- brick('all_covariates.tif')
-names(d) <- read.table('all_covariates_names.txt')$V1
-
-# Load f and regions sf data (after normalizing IDs to match rasterization)
-load('inputs.Rdata')
-
-load('sites.RData')
+sites <- readRDS('sites.RDS')
 dim(sites)
 
 # Filter to only sites over 100 ha
@@ -138,6 +162,13 @@ sites$Rangeland[sites$Restoration == 'Rangeland Restoration'] <- TRUE
 table(sites$Rangeland)
 sites <- sites[!sites$Rangeland, ]
 dim(sites)
+
+regions <- readRDS('regions.RDS')
+regions_rast <- fasterize(regions, raster(d[[1]]),
+                          field='level1_ID')
+names(regions_rast) <- 'region'
+
+d <- stack(d, regions_rast)
 
 ###############################################################################
 ###  Run matching

@@ -87,6 +87,7 @@ covariates <- stack(covariates_1, covariates_2, biomass, population,
                     population_growth)
 writeRaster(covariates, filename='covariates_covariates.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+write_csv(data.frame(names=names(covariates)), 'covariates_covariates.csv')
 
 fc_change <- brick('fc_change.tif')
 extent(fc_change) <- extent(covariates_1)
@@ -94,6 +95,7 @@ names(fc_change) <- c(paste0('fcc_0', seq(0, 9)),
                       paste0('fcc_', seq(10, 19)))
 writeRaster(fc_change, filename='covariates_fc_change.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+write_csv(data.frame(names=names(fc_change)), 'covariates_fc_change.csv')
 
 # lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
 
@@ -117,6 +119,7 @@ names(lc_2015) <- c('lc_2015_forest',
                     'lc_2015_water')
 writeRaster(lc_2015, filename='covariates_lc_2015.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+write_csv(data.frame(names=names(lc_2015)), 'covariates_lc_2015.csv')
 
 fc00_09 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'fc00_09_ha[-.0-9]*tif')
 NAvalue(fc00_09) <- -32768
@@ -128,9 +131,10 @@ NAvalue(fc10_19) <- -32768
 names(fc10_19) <- paste0('fc_', seq(10, 19))
 extent(fc10_19) <- extent(covariates_1)
 
-fc <- stack(fc00_09, fc00_09)
+fc <- stack(fc00_09, fc10_19)
 writeRaster(fc, filename='covariates_fc.tif', 
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
+write_csv(data.frame(names=names(fc)), 'covariates_fc.csv')
 
 ###############################################################################
 ### Load GADM boundaries
@@ -154,29 +158,3 @@ names(regions_rast) <- 'region'
 region_IDs_after_rasterization <- get_unique(regions_rast)
 stopifnot(sort(region_IDs_after_rasterization) == sort(regions$level1_ID))
 saveRDS(regions, file='regions.RDS')
-
-###############################################################################
-### Final data setup
-
-f <- treatment ~ lc_2015_agriculture + precip + temp + 
-    elev + slope + dist_cities + dist_roads + crop_suitability + pop_2015 + 
-    pop_growth + total_biomass
-
-saveRDS(f, file='formula.RDS')
-
-d <- stack(covariates_1, covariates_2, 
-           biomass, population, population_growth, regions_rast)
-# Ensure only layers in the formula are included (so extra data isn't being 
-# passed around)
-d <- d[[c(get_names(f),
-          'region',
-          'ecoregion',
-          'pa',
-           paste0('fc_0', seq(0, 9)),
-           paste0('fc_', seq(10, 19)),
-           paste0('fcc_0', seq(0, 9)),
-           paste0('fcc_', seq(10, 19)))]]
-write.table(names(d), file='all_covariates_names.txt', row.names=FALSE, 
-            col.names=FALSE)
-writeRaster(d, filename='all_covariates.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")

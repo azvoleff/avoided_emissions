@@ -35,6 +35,7 @@ sites %>%
            Area=Area_Name_,
            CI_Start_Date=CI_Start_D,
            CI_End_Date=CI_End_Dat,
+           Restoration=Restoratio,
            Area_ha=area_cea) -> sites
 sites$CI_ID <- factor(sites$CI_ID)
 
