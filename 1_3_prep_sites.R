@@ -1,4 +1,3 @@
-
 library(sf)
 library(foreach)
 library(units)
@@ -34,14 +33,17 @@ sites %>%
     select(CI_ID,
            Data_Year=data_year,
            Area=Area_Name_,
-           #CI_Start_Date=CI_Start_D,
-           #ECI_End_Date=CI_End_Dat,
+           CI_Start_Date=CI_Start_D,
+           CI_End_Date=CI_End_Dat,
            Area_ha=area_cea) -> sites
 sites$CI_ID <- factor(sites$CI_ID)
 
 sites$CI_Start_Date_clean <- as.character(sites$CI_Start_Date)
 sites$CI_Start_Date_clean <- str_replace(sites$CI_Start_Date_clean, '^([0-9]{4})$', '1/1/\\1')
 sites$CI_Start_Date_clean <- mdy(sites$CI_Start_Date_clean)
+sites %>%
+    ggplot() +
+    geom_histogram(aes(CI_Start_Date_clean))
 # Set all start dates that are missing to 2016 (the median year)
 sites$CI_Start_Date_clean[is.na(sites$CI_Start_Date_clean)] <- mdy('1/1/2016')
 sites$CI_Start_Year <- year(sites$CI_Start_Date_clean)
@@ -49,11 +51,14 @@ sites$CI_Start_Year <- year(sites$CI_Start_Date_clean)
 sites$CI_End_Date_clean <- as.character(sites$CI_End_Date)
 sites$CI_End_Date_clean <- str_replace(sites$CI_End_Date_clean, '^([0-9]{4})$', '1/1/\\1')
 sites$CI_End_Date_clean <- mdy(sites$CI_End_Date_clean)
-
+sites %>%
+    ggplot() +
+    geom_histogram(aes(CI_End_Date_clean))
 # Set all end dates that are greater than 12/31/2019 to NA, so they are treated 
 # as ongoing
 sites$CI_End_Date_clean[sites$CI_End_Date_clean > mdy('12/31/2019')] <- NA
 sites$CI_End_Year <- year(sites$CI_End_Date_clean)
+table(is.na(sites$CI_End_Year))
 
 saveRDS(sites, 'sites.RDS')
 
