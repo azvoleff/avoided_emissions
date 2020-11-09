@@ -1,16 +1,14 @@
+library(raster)
 library(fasterize)
 library(sf)
 library(tidyverse)
 library(units)
-library(raster)
 library(foreach)
-library(optmatch)
 library(mapview)
-library(doParallel)
-#registerDoParallel(4)
+library(exactextractr)
+library(raster)
+library(tictoc)
 
-MAX_TREATMENT <- 2000
-    
 options("optmatch_max_problem_size"=Inf)
 
 data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
@@ -30,90 +28,12 @@ gdal_crop <- function(r, s) {
     return(out_r)
 }
 
-# Function to allow rbinding dataframes with foreach even when some dataframes 
-# may not have any rows
-foreach_rbind <- function(d1, d2) {
-    if (is.null(d1) & is.null(d2)) {
-        return(NULL)
-    } else if (!is.null(d1) & is.null(d2)) {
-        return(d1)
-    } else if (is.null(d1) & !is.null(d2)) {
-        return(d2)
-    } else  {
-        return(bind_rows(d1, d2))
-    }
-}
-
-match_ae <- function(d, f) {
-    # Filter out sites without at least one treatment unit or without at
-    # least one control unit
-    d <- d %>%
-        filter(complete.cases(.)) %>%
-        mutate(n_treatment=sum(treatment),
-               n_control=sum(!treatment)) %>%
-        filter(n_treatment >= 1, n_control >= 1)
-
-    # Note custom combine to handle iterations that don't return any value
-    d_CI <- filter(d, treatment)
-    # Filter out climates and land covers that don't appear in the CI
-    # sample, and drop these levels from the factors
-    d <- filter(d,
-        region %in% unique(d_CI$region),
-        ecoregion %in% unique(d_CI$ecoregion),
-        pa %in% unique(d_CI$pa))
-    d$region <- droplevels(d$region)
-    d$ecoregion <- droplevels(d$ecoregion)
-    d$pa <- droplevels(d$pa)
-    # Can't stratify by land cover or climate if they only have one level
-    if (nlevels(d$region) >= 2) {
-        f <- update(f, ~ . + strata(region))
-    } else {
-        f <- update(f, ~ . - region)
-    }
-    if (nlevels(d$ecoregion) >= 2) {
-        f <- update(f, ~ . + strata(ecoregion))
-    } else {
-        f <- update(f, ~ . - ecoregion)
-    }
-    if (nlevels(d$pa) >= 2) {
-        f <- update(f, ~ . + strata(pa))
-    } else {
-        f <- update(f, ~ . - pa)
-    }
-    if (nrow(d_CI) > 2) {
-        model <- glm(f, data=d)
-        dists <- match_on(model, data=d)
-    } else {
-        # Use Mahalanobis distance if there aren't enough points to run a
-        # glm
-        dists <- match_on(f, data=d)
-    }
-    #dists <- caliper(dists, 2)
-    # If the controls are too far from the treatments (due to the caliper) 
-    # then the matching may fail. Can test for this by seeing if subdim 
-    # runs successfully
-    subdim_works <- tryCatch(is.data.frame(subdim(dists)),
-                             error=function(e) return(FALSE))
-    if (subdim_works) {
-        m <- fullmatch(dists, min.controls=1, max.controls=1, data=d)
-        d <- d[matched(m), ]
-    } else {
-        d <- data.frame()
-    }
-    # Need to handle the possibility that there were no matches for this 
-    # treatment, meaning d will be an empty data.frame
-    if (nrow(d) == 0) {
-        return(NULL)
-    } else {
-        return(d)
-    }
-}
-
 # Basic function to extract variable names from a formula object
 get_names <- function(f) {
     f <- paste0(as.character(f), collapse=' ')
-    vars <- strsplit(f, split='[+ ~]')[[1]]
-    vars[vars != '']
+    v <- strsplit(f, split='[+ ~]')[[1]]
+    v <- v[v != '']
+    gsub('strata\\(([a-zA-Z_]*)\\)', '\\1', v)
 }
 
 ###############################################################################
@@ -122,18 +42,18 @@ get_names <- function(f) {
 f <- treatment ~ lc_2015_agriculture + precip + temp + elev + slope + 
     dist_cities + dist_roads + crop_suitability + pop_2015 + pop_growth + 
     total_biomass
+saveRDS(f, 'Output/formula.RDS')
 
 covariates <- brick('covariates_covariates.tif')
 names(covariates) <- read_csv('covariates_covariates.csv')$names
 lc_2015 <- brick('covariates_lc_2015.tif')
 names(lc_2015) <- read_csv('covariates_lc_2015.csv')$names
-# fc <- brick('covariates_fc.tif')
-# names(fc) <- read_csv('covariates_fc.csv')$names
+fc <- brick('covariates_fc.tif')
+names(fc) <- read_csv('covariates_fc.csv')$names
 fc_change <- brick('covariates_fc_change.tif')
 names(fc_change) <- read_csv('covariates_fc_change.csv')$names
 
-#d <- stack(covariates, lc_2015, fc, fc_change)
-d <- stack(covariates, lc_2015, fc_change)
+d <- stack(covariates, lc_2015, fc, fc_change)
 # Ensure only layers in the formula are included (so extra data isn't being 
 # passed around)
 d <- d[[c(get_names(f),
@@ -152,6 +72,10 @@ write_csv(data.frame(names=names(d)), file='all_covariates_names.csv')
 sites <- readRDS('sites.RDS')
 dim(sites)
 
+# Drop sites with no overlap with GADM (since they'd throw errors later during 
+# the extraction) - these are marine sites
+sites <- filter(sites, !(CI_ID %in% c('242002', '242114')))
+
 # Filter to only sites over 100 ha
 sites <- sites[!sites$Area_ha < as_units(100, 'hectares'), ]
 dim(sites)
@@ -164,144 +88,30 @@ sites <- sites[!sites$Rangeland, ]
 dim(sites)
 
 regions <- readRDS('regions.RDS')
-regions_rast <- fasterize(regions, raster(d[[1]]),
-                          field='level1_ID')
+regions_rast <- fasterize(regions, raster(d[[1]]), field='level1_ID')
 names(regions_rast) <- 'region'
 
 d <- stack(d, regions_rast)
 
 ###############################################################################
-###  Run matching
-set.seed(31)
-# message_log <- file("log_message.txt", 'w')
-# output_log <- file("log_output.txt", 'w')
-ae <- foreach(row_num=1:nrow(sites),
-             .packages=c('sf', 'tidyverse', 'optmatch', 'raster'),
-             .combine=foreach_rbind, .inorder=FALSE) %do% {
-    p <- sites[row_num, ]
-    CI_ID <- as.character(p$CI_ID)
-    Data_Year <- p$Data_Year
-    if (file.exists(paste0('Output/m_', CI_ID, '_', Data_Year, '.RData'))) {
-        print(paste('Skipping', CI_ID, Data_Year))
-        return(NULL)
-    }
-    # sink(output_log, append=TRUE, type='output')
-    # sink(message_log, append=TRUE, type="message")
-    print(paste0(row_num, ': Cropping'))
-    # st_intersects expects planar coords, but approximate match from WGS84 is 
-    # fine here since the regions are all much larger than the sites - will 
-    # convert to CEA later when it matters
-    inter <- tryCatch(st_intersects(p, regions)[[1]],
-                      error=function(e) return(FALSE))
-    if ((length(inter) == 0) || !inter) {
-        # Some areas won't overlap the GADM at all (marine sites for example). 
-        # Return no results for these areas.
-        print(paste0(row_num, ": polygon doesn't overlap GADM at all"))
-        return(NULL)
-    } else {
-        d_crop <- gdal_crop(d, regions[inter, ])
-    }
+###  Load sites and covariates
 
-    print(paste0(row_num, ': Adding treatment indicator layer'))
-    d_crop$treatment <- 0
-    d_crop$treatment[is.na(d_crop$region)] <- NA
-    d_crop$treatment <- mask(d_crop$treatment, p)
+# Run extractions of treatment points individually to make catching any polygon 
+# errors easier
+treatment_cells <- foreach(n=1:nrow(sites), .combine=rbind) %do% {
+    print(n)
+    exact_extract(d$region, sites[n, ], include_cell=TRUE, 
+                  include_cols=c('CI_ID', 'Data_Year'))[[1]]
+}
+treatment_cells <- rename(treatment_cells, region=value)
+saveRDS(treatment_cells, 'Output/treatment_cell_key.RDS')
 
-    if (cellStats(d_crop$treatment, 'sum') == 0) {
-        print(paste0(row_num, ': No treatment values - perhaps a marine site?'))
-        return(NULL)
-    }
-
-    # Note that the below will drop any portions of a site that don't fall 
-    # within a region in GADM- this means that marine areas will be dropped. 
-    # Given this calculation is for avoided emissions, likely not a problem... 
-    #
-    # Treatment is 1, control is zero
-    #
-    # TODO: Need to ensure we also mask out other areas where CI has ongoing 
-    # interventions.
-
-    # Project all items to cylindrical equal area
-    # d_crop <- projectRaster(d_crop, crs=CRS('+proj=cea'), method='ngb')
-
-    print(paste0(row_num, ': Reading values'))
-    treatment_vals <- extract(d_crop, p, df=TRUE)
-    treatment_vals <- treatment_vals[names(treatment_vals) != 'ID']
-    n_treatment_cells_total <- nrow(treatment_vals)
-    print(paste0(row_num, ': ', n_treatment_cells_total, ' total treatment cells'))
-    ###
-    # Sample the treatment cells if there are more than MAX_TREATMENT
-    if (n_treatment_cells_total <= MAX_TREATMENT) {
-        n_treatment_cells_sample <- n_treatment_cells_total
-    } else {
-        n_treatment_cells_sample <- MAX_TREATMENT
-        treatment_vals <- sample_n(treatment_vals, MAX_TREATMENT)
-        print(paste0(row_num, ': sampled ', nrow(treatment_vals), ' treatment cells'))
-    }
-    ###
-    # Sample the control cells if there are more than 100*MAX_TREATMENT
-    #
-    # Note the below factor is set slightly higher than the one used with 
-    # sampling to ensure that there are enough cells to sample from
-    if (ncell(d_crop) < (120 * n_treatment_cells_sample)) {
-        print(paste0(row_num, ': using all possible control points'))
-        control_vals <- data.frame(getValues(d_crop))
-    } else {
-        control_vals <- as.data.frame(sampleRegular(d_crop,
-                                                    100 * n_treatment_cells_sample, 
-                                                    useGDAL=TRUE))
-        print(paste0(row_num, ': sampled ', nrow(control_vals), ' control cells'))
-    }
-    # Ensure no treatment cells were picked up within the control points
-    control_vals <- dplyr::filter(control_vals, treatment == 0)
-    vals <- rbind(treatment_vals, control_vals)
-    # Remove any points with missing data for treatment indicator
-    vals <- vals[!is.na(vals$treatment), ]
-    print(paste0(row_num, ': ', nrow(vals), ' total cells in matching'))
-    vals$treatment <- as.logical(vals$treatment)
-    vals$region <- as.factor(vals$region)
-    vals$ecoregion <- as.factor(vals$ecoregion)
-    vals$pa <- as.factor(vals$pa)
-
-    if (nrow(filter(vals, treatment))) {
-        print(paste0(row_num, ': No treatment values remaining after filtering'))
-        return(NULL)
-    } else {
-        print(paste0(row_num, ': Matching'))
-        m <- match_ae(vals, f)
-
-        print(paste0(row_num, ': Formatting output'))
-        if (is.null(m)) {
-            print(paste0(row_num, ': no matches'))
-        } else {
-            m <- dplyr::select(m, c(get_names(f),
-                             'fc_2000',
-                             'fc_2001',
-                             'fc_2002',
-                             'fc_2003',
-                             'fc_2004',
-                             'fc_2005',
-                             'fc_2006',
-                             'fc_2007',
-                             'fc_2008',
-                             'fc_2009',
-                             'fc_2010',
-                             'fc_2011',
-                             'fc_2012',
-                             'fc_2013',
-                             'fc_2014',
-                             'fc_2015',
-                             'fc_2016',
-                             'fc_2017',
-                             'fc_2018',
-                             'fc_2019'))
-            m$CI_ID <- CI_ID
-            m$Data_Year <- Data_Year
-            m <- m %>% dplyr::select(CI_ID, everything())
-            print(paste0(row_num, ': saving output'))
-        m$sampled_fraction <- n_treatment_cells_sample / n_treatment_cells_total
-        save(m, file=paste0('Output/m_', CI_ID, '_', Data_Year, '.RData'))
-        }
-    }
-    return(m)
+# Run extraction of control and treatment data by region to make the problem 
+# tractable in-memory
+regions_inter <- regions[unique(unlist(st_intersects(sites, regions))), ]
+foreach(n=1:nrow(regions_inter), .packages=c('exactextractr', 'sf')) %do% {
+    this_region <- regions_inter[n, ]
+    vals <- exact_extract(d, this_region, include_cell=TRUE)[[1]]
+    saveRDS(vals, paste0('Output/treatments_and_controls_', 
+                         this_region$level1_ID, '.RDS'))
 }

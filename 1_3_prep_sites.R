@@ -35,6 +35,7 @@ sites %>%
            Area=Area_Name_,
            CI_Start_Date=CI_Start_D,
            CI_End_Date=CI_End_Dat,
+           CI_Division=CI_Divisio,
            Restoration=Restoratio,
            Area_ha=area_cea) -> sites
 sites$CI_ID <- factor(sites$CI_ID)
@@ -61,6 +62,8 @@ sites$CI_End_Date_clean[sites$CI_End_Date_clean > mdy('12/31/2019')] <- NA
 sites$CI_End_Year <- year(sites$CI_End_Date_clean)
 table(is.na(sites$CI_End_Year))
 
+sites$ID <- 1:nrow(sites)
+write_csv(select(sites, CI_ID, ID), 'site_ID_key.csv')
 saveRDS(sites, 'sites.RDS')
 
 # Check for overlaps
