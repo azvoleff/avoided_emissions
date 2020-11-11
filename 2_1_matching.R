@@ -98,20 +98,25 @@ d <- stack(d, regions_rast)
 
 # Run extractions of treatment points individually to make catching any polygon 
 # errors easier
-treatment_cells <- foreach(n=1:nrow(sites), .combine=rbind) %do% {
+treatment_key <- foreach(n=1:nrow(sites), .combine=rbind) %do% {
     print(n)
     exact_extract(d$region, sites[n, ], include_cell=TRUE, 
                   include_cols=c('CI_ID', 'Data_Year'))[[1]]
 }
-treatment_cells <- rename(treatment_cells, region=value)
-saveRDS(treatment_cells, 'Output/treatment_cell_key.RDS')
+treatment_key <- treatment_key[!is.na(treatment_key$region), ]
+saveRDS(treatment_key, 'Output/treatment_cell_key.RDS')
 
 # Run extraction of control and treatment data by region to make the problem 
 # tractable in-memory
-regions_inter <- regions[unique(unlist(st_intersects(sites, regions))), ]
-foreach(n=1:nrow(regions_inter), .packages=c('exactextractr', 'sf')) %do% {
-    this_region <- regions_inter[n, ]
-    vals <- exact_extract(d, this_region, include_cell=TRUE)[[1]]
-    saveRDS(vals, paste0('Output/treatments_and_controls_', 
-                         this_region$level1_ID, '.RDS'))
+out <- foreach(this_region_ID=unique(treatment_key$region), 
+        .packages=c('exactextractr', 'sf')) %do% {
+    if (file.exists(paste0('Output/treatments_and_controls_', this_region_ID, 
+                           '.RDS'))) {
+        print(paste0('Skipping ', this_region_ID, '. Already processed.'))
+    } else {
+        this_region <- regions[regions$level1_ID == this_region_ID, ]
+        vals <- exact_extract(d, this_region, include_cell=TRUE)[[1]]
+        saveRDS(vals, paste0('Output/treatments_and_controls_', 
+                             this_region_ID, '.RDS'))
+    }
 }
