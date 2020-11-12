@@ -36,7 +36,6 @@ m %>%
 ggsave('output_emissions_avoided_fraction_sampled.png', width=10, height=6)
 
 foreach (this_data_year=c(2018, 2019, 2020)) %do% {
-    # Calculate emissions for each year
     tic()
     m %>%
         filter(Data_Year == this_data_year) %>%
@@ -70,8 +69,8 @@ foreach (this_data_year=c(2018, 2019, 2020)) %do% {
                   Emissions_MgCO2e_CI_minus_control=Emissions_MgCO2e[treatment] - Emissions_MgCO2e[!treatment]) %>%
         as_tibble() -> m_site
     toc()
-    saveRDS(m_site, file='output_emissions_avoided.RDS')
-    write_csv(m_site, 'output_emissions_avoided.csv')
+    saveRDS(m_site, file=paste0('output_emissions_avoided_', this_data_year, '.RDS'))
+    write_csv(m_site, paste0('output_emissions_avoided_', this_data_year, '.csv'))
 
     m_site %>%
         select(-forest_loss_ha_CI_minus_control)%>%
@@ -79,8 +78,8 @@ foreach (this_data_year=c(2018, 2019, 2020)) %do% {
                     values_from=Emissions_MgCO2e_CI_minus_control,
                     names_prefix='c_oavoid_') %>%
         select(order(colnames(.))) -> m_site_wide
-    write_csv(m_site_wide, 'output_emissions_avoided_wide.csv')
-    saveRDS(m_site_wide, file='output_emissions_avoided_wide.RDS')
+    write_csv(m_site_wide, paste0('output_emissions_avoided_', this_data_year, '_wide.csv'))
+    saveRDS(m_site_wide, file=paste0('output_emissions_avoided_', this_data_year, '_wide.RDS'))
 }
 
 
