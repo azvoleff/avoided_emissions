@@ -45,13 +45,6 @@ get_unique <- function(x) {
     return (na.omit(out))
 }
 
-# Basic function to extract variable names from a formula object
-get_names <- function(f) {
-    f <- paste0(as.character(f), collapse=' ')
-    vars <- strsplit(f, split='[+ ~]')[[1]]
-    vars[vars != '']
-}
-
 ###############################################################################
 
 # Load covariates
@@ -89,15 +82,8 @@ writeRaster(covariates, filename='covariates_covariates.tif',
             overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
 write_csv(data.frame(names=names(covariates)), 'covariates_covariates.csv')
 
-fc_change <- brick('fc_change.tif')
-extent(fc_change) <- extent(covariates_1)
-names(fc_change) <- c(paste0('fcc_0', seq(0, 9)),
-                      paste0('fcc_', seq(10, 19)))
-writeRaster(fc_change, filename='covariates_fc_change.tif', 
-            overwrite=TRUE, options="COMPRESS=LZW", datatype="INT2S")
-write_csv(data.frame(names=names(fc_change)), 'covariates_fc_change.csv')
-
-# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
+# lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 
+# 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')
 
 
 # lc_2001 <- load_as_vrt(file.path(data_folder, 'Degradation_Paper', 'GEE_Rasters'), 'stack_lc2001_ha[-.0-9]*tif')

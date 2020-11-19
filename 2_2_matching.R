@@ -1,6 +1,8 @@
+library(dtplyr)
+library(dplyr, warn.conflicts = FALSE)
 library(tidyverse)
-library(optmatch)
 library(foreach)
+library(optmatch)
 library(lubridate)
 library(biglm)
 library(tictoc)
@@ -50,19 +52,20 @@ get_matches <- function(d, dists) {
 }
 
 match_ae <- function(d, f) {
-        m <- foreach(this_group=unique(d$group), .combine=foreach_rbind) %do% {
-            this_d <- filter(d, group == this_group)
-            # Calculate propensity scores with a GLM, or else use Mahalanobis 
-            # distance if there aren't enough points to run a glm
-            if (sum(d$treatment) > 30) {
-                model <- glm(f, data=this_d, family=binomial())
-                dists <- match_on(model, caliper=.5, data=this_d)
-                return(get_matches(this_d, dists))
-            } else {
-                dists <- match_on(f, caliper=.5, data=this_d)
-                return(get_matches(d, dists))
-            }
+    m <- foreach(this_group=unique(d$group), .combine=foreach_rbind) %do% {
+        this_d <- filter(d, group == this_group)
+        # Calculate propensity scores with a GLM, or else use Mahalanobis 
+        # distance if there aren't enough points to run a glm
+        if (sum(d$treatment) > 30) {
+            model <- glm(f, data=this_d, family=binomial())
+            dists <- match_on(model, caliper=.5, data=this_d)
+            return(get_matches(this_d, dists))
+            return(get_matches(this_d, dists))
+        } else {
+            dists <- match_on(f, caliper=.5, data=this_d)
+            return(get_matches(d, dists))
         }
+    }
     # Need to handle the possibility that there were no matches for this 
     # treatment, meaning d will be an empty data.frame
     if (nrow(d) == 0) {
@@ -109,13 +112,9 @@ set.seed(31)
     #         .combine=foreach_rbind, .inorder=FALSE) %do% {
 ae <- foreach(this_year=unique(treatment_key$Data_Year)[1],
               .combine=foreach_rbind, .inorder=FALSE) %do% {
-    foreach(this_CI_ID=unique(filter(treatment_key, Data_Year == 
-                                     this_year)$CI_ID)[231],
-            .combine=foreach_rbind, 
-            .inorder=FALSE) %do% {
-
+    foreach(this_CI_ID=unique(treatment_key$CI_ID)[40],
+            .combine=foreach_rbind, .inorder=FALSE) %do% {
         tic()
-
         ###############
         # Load datasets
         
@@ -254,8 +253,80 @@ ae <- foreach(this_year=unique(treatment_key$Data_Year)[1],
     }
 }
 
+###############################################################################
+# Load all output and resave in one file
 m <- foreach(f=list.files('Output', pattern ='^m_[0-9]*_[0-9]{4}.RDS$'), 
               .combine=foreach_rbind) %do% {
     readRDS(paste0('Output/', f))
 }
-saveRDS(m, paste0('Output/m_ALL.RDS'))
+saveRDS(m, 'Output/m_ALL.RDS')
+
+
+###############################################################################
+# Summarize results by site
+
+readRDS('sites.RDS') %>%
+    select(CI_ID,
+           Data_Year,
+           CI_Start_Date_clean, 
+           CI_End_Date_clean) %>%
+    mutate(CI_Start_Year=year(CI_Start_Date_clean),
+           CI_End_Year=ifelse(is.na(year(CI_End_Date_clean)), 2099, year(CI_End_Date_clean))) %>%
+    select(-CI_Start_Date_clean, -CI_End_Date_clean) -> sites
+
+get_chunk <- function(d, n, n_chunks=10) {
+    start_ind <- round(seq(1, length(d), length.out=n_chunks + 1))[1:(n_chunks)]
+    end_ind <- c(start_ind[2:n_chunks] - 1, length(d))
+    return(d[start_ind[n]:end_ind[n]])
+}
+
+# Process in chunks to save memory
+n_chunks <- 20
+data_files <- list.files('Output', pattern ='^m_[0-9]*_[0-9]{4}.RDS$')
+m_site <- foreach (i=1:n_chunks, .combine=bind_rows) %do% {
+#m_site <- foreach (i=10:11, .combine=bind_rows) %do% {
+    print(paste0('Progress: ', ((i-1)/n_chunks)*100, '%'))
+    tic()
+    this_m <- foreach(f=get_chunk(data_files, i, n_chunks),
+                  .combine=bind_rows, .inorder=FALSE) %do% {
+        readRDS(paste0('Output/', f)) %>%
+            select(cell,
+                   CI_ID,
+                   Data_Year, 
+                   treatment,
+                   sampled_fraction,
+                   total_biomass,
+                   starts_with('fc_')) %>%
+            left_join(sites, by=c('CI_ID', 'Data_Year')) %>%
+            gather(year, forest_at_year_end, starts_with('fc_')) %>%
+            mutate(year=2000 + as.numeric(str_replace(year, 'fc_', ''))) %>%
+            group_by(CI_ID, Data_Year, cell, treatment) %>%
+            filter(between(year, CI_Start_Year[1] - 1, CI_End_Year[1])) %>% # include one year prior to project start to get initial forest cover
+            arrange(cell, year) %>%
+            mutate(forest_loss_during_year=c(NA, diff(forest_at_year_end)),
+                   forest_frac_remaining = forest_at_year_end / forest_at_year_end[1],
+                   biomass_at_year_end = total_biomass * forest_frac_remaining,
+                   #  to convert biomass to carbon * .5
+                   C_change=c(NA, diff(biomass_at_year_end)) * .5,
+                   #  to convert change in C to CO2e * 3.67
+                   Emissions_MgCO2e=C_change * -3.67) %>%
+            as_tibble() -> x
+    }
+    this_m %>%
+        group_by(CI_ID, Data_Year, year, treatment) %>%
+        filter(between(year, CI_Start_Year[1], CI_End_Year[1])) %>% # filter out the year prior to project start as no longer needed
+        summarise(CI_Start_Year=CI_Start_Year[1],
+                  CI_End_Year=CI_End_Year[1],
+                  # correct totals for areas where only a partial sample was used 
+                  # by taking into account the fraction sampled
+                  forest_loss_ha=sum(forest_loss_during_year, na.rm=TRUE) * (1 / sampled_fraction[1]),
+                  Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE) * (1 / sampled_fraction[1])) %>%
+        as_tibble() -> this_m_site
+
+    toc()
+    gc()
+    return(this_m_site)
+}
+
+saveRDS(m_site, file='output_raw_by_site.RDS')
+write_csv(m_site, 'output_raw_by_site.csv')

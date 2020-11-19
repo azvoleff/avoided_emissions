@@ -103,6 +103,8 @@ treatment_key <- foreach(n=1:nrow(sites), .combine=rbind) %do% {
     exact_extract(d$region, sites[n, ], include_cell=TRUE, 
                   include_cols=c('CI_ID', 'Data_Year'))[[1]]
 }
+treatment_key %>%
+    rename(region=value) -> treatment_key
 treatment_key <- treatment_key[!is.na(treatment_key$region), ]
 saveRDS(treatment_key, 'Output/treatment_cell_key.RDS')
 
