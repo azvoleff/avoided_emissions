@@ -56,22 +56,20 @@ match_ae <- function(d, f) {
         this_d <- filter(d, group == this_group)
         # Calculate propensity scores with a GLM, or else use Mahalanobis 
         # distance if there aren't enough points to run a glm
-        if (sum(d$treatment) > 30) {
+        if (sum(this_d$treatment) > 30) {
             model <- glm(f, data=this_d, family=binomial())
-            dists <- match_on(model, caliper=.5, data=this_d)
-            return(get_matches(this_d, dists))
-            return(get_matches(this_d, dists))
+            dists <- match_on(model, data=this_d)
         } else {
-            dists <- match_on(f, caliper=.5, data=this_d)
-            return(get_matches(d, dists))
+            dists <- match_on(f, data=this_d)
         }
+        return(get_matches(this_d, dists))
     }
     # Need to handle the possibility that there were no matches for this 
     # treatment, meaning d will be an empty data.frame
-    if (nrow(d) == 0) {
+    if (nrow(m) == 0) {
         return(NULL)
     } else {
-        return(d)
+        return(m)
     }
 }
 
@@ -107,12 +105,9 @@ set.seed(31)
 # this_year = 2018
 ###############################################################################
 
-#ae <- foreach(this_year=c(2018),
-    # foreach(this_CI_ID='450063',
-    #         .combine=foreach_rbind, .inorder=FALSE) %do% {
-ae <- foreach(this_year=unique(treatment_key$Data_Year)[1],
+ae <- foreach(this_year=unique(treatment_key$Data_Year),
               .combine=foreach_rbind, .inorder=FALSE) %do% {
-    foreach(this_CI_ID=unique(treatment_key$CI_ID)[40],
+    foreach(this_CI_ID=unique(treatment_key$CI_ID),
             .combine=foreach_rbind, .inorder=FALSE) %do% {
         tic()
         ###############
@@ -244,8 +239,8 @@ ae <- foreach(this_year=unique(treatment_key$Data_Year)[1],
                 m$Data_Year <- this_year
                 m <- m %>% dplyr::select(CI_ID, everything())
                 print(paste0(this_CI_ID, ': saving output'))
-            m$sampled_fraction <- sum(vals$treatment) / n_treatment_cells_total
-            saveRDS(m, paste0('Output/m_', this_CI_ID, '_', this_year, '.RDS'))
+                m$sampled_fraction <- sum(vals$treatment) / n_treatment_cells_total
+                saveRDS(m, paste0('Output/m_', this_CI_ID, '_', this_year, '.RDS'))
             }
         }
         toc()
@@ -289,6 +284,7 @@ m_site <- foreach (i=1:n_chunks, .combine=bind_rows) %do% {
     tic()
     this_m <- foreach(f=get_chunk(data_files, i, n_chunks),
                   .combine=bind_rows, .inorder=FALSE) %do% {
+
         readRDS(paste0('Output/', f)) %>%
             select(cell,
                    CI_ID,
@@ -310,17 +306,18 @@ m_site <- foreach (i=1:n_chunks, .combine=bind_rows) %do% {
                    C_change=c(NA, diff(biomass_at_year_end)) * .5,
                    #  to convert change in C to CO2e * 3.67
                    Emissions_MgCO2e=C_change * -3.67) %>%
+            filter(between(year, CI_Start_Year[1], CI_End_Year[1])) %>% # drop year prior to project start as no longer needed
             as_tibble() -> x
     }
     this_m %>%
         group_by(CI_ID, Data_Year, year, treatment) %>%
-        filter(between(year, CI_Start_Year[1], CI_End_Year[1])) %>% # filter out the year prior to project start as no longer needed
         summarise(CI_Start_Year=CI_Start_Year[1],
                   CI_End_Year=CI_End_Year[1],
                   # correct totals for areas where only a partial sample was used 
                   # by taking into account the fraction sampled
                   forest_loss_ha=sum(forest_loss_during_year, na.rm=TRUE) * (1 / sampled_fraction[1]),
-                  Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE) * (1 / sampled_fraction[1])) %>%
+                  Emissions_MgCO2e=sum(Emissions_MgCO2e, na.rm=TRUE) * (1 / sampled_fraction[1]),
+                  n_pixels=n()) %>%
         as_tibble() -> this_m_site
 
     toc()
