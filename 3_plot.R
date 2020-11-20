@@ -33,8 +33,8 @@ foreach(this_data_year=unique(m_site$Data_Year)) %do% {
 m_site %>%
     filter(year >= 2017) %>%
     group_by(Data_Year, year, CI_ID) %>%
-    summarise(fc_loss_pct_of_control=sum(forest_loss_ha[treatment], na.rm=TRUE) /
-                                     sum(forest_loss_ha[!treatment], na.rm=TRUE)*100) %>%
+    summarise(fc_loss_pct_of_control=(sum(forest_loss_ha[treatment], na.rm=TRUE) /
+                                     sum(forest_loss_ha[!treatment], na.rm=TRUE))*100) %>%
     group_by(Data_Year, year) %>%
     arrange(fc_loss_pct_of_control) %>%
     mutate(order=1:n()) %>%
@@ -45,8 +45,8 @@ m_site %>%
 m_site %>%
     filter(year >= 2017) %>%
     group_by(Data_Year, year, CI_ID) %>%
-    summarise(fc_loss_pct_of_control=sum(forest_loss_ha[treatment], na.rm=TRUE) /
-                                     sum(forest_loss_ha[!treatment], na.rm=TRUE)*100) %>%
+    summarise(fc_loss_pct_of_control=(sum(forest_loss_ha[treatment], na.rm=TRUE) /
+                                      sum(forest_loss_ha[!treatment], na.rm=TRUE))*100) %>%
     ungroup() %>%
     group_by(Data_Year, year) %>%
     summarise(gt100=sum(fc_loss_pct_of_control > 100, na.rm=TRUE),

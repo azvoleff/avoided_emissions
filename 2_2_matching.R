@@ -9,7 +9,7 @@ library(tictoc)
 
 options("optmatch_max_problem_size"=Inf)
 
-MAX_TREATMENT <- 2000
+MAX_TREATMENT <- 1000
 CONTROL_MULTIPLIER <- 50
     
 # Function to allow rbinding dataframes with foreach even when some dataframes 
