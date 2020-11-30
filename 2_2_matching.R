@@ -99,12 +99,6 @@ filter_groups <- function(vals) {
 
 set.seed(31)
 
-###############################################################################
-# TODO: Remove this, for testing only
-# this_CI_ID='450063'
-# this_year = 2018
-###############################################################################
-
 ae <- foreach(this_year=unique(treatment_key$Data_Year),
               .combine=foreach_rbind, .inorder=FALSE) %do% {
     foreach(this_CI_ID=unique(treatment_key$CI_ID),
