@@ -7,55 +7,51 @@ library(tictoc)
 
 m_site <- readRDS('output_raw_by_site.RDS')
 
-foreach(this_data_year=unique(m_site$Data_Year)) %do% {
-    m_site %>%
-        group_by(CI_ID, Data_Year, year) %>%
-        summarise(CI_Start_Year=CI_Start_Year[1],
-                  CI_End_Year=CI_End_Year[1],
-                  forest_loss_ha_CI_minus_control=forest_loss_ha[treatment] - forest_loss_ha[!treatment],
-                  Emissions_MgCO2e_CI_minus_control=Emissions_MgCO2e[treatment] - Emissions_MgCO2e[!treatment]) -> m_by_year
-        saveRDS(m_by_year, file=paste0('output_emissions_avoided_', this_data_year, '.RDS'))
-        write_csv(m_by_year, paste0('output_emissions_avoided_', this_data_year, '.csv'))
-
-    m_by_year %>%
-        select(-forest_loss_ha_CI_minus_control)%>%
-        pivot_wider(names_from=year,
-                    values_from=Emissions_MgCO2e_CI_minus_control,
-                    names_prefix='c_oavoid_') %>%
-        select(order(colnames(.))) -> m_by_year_wide
-    write_csv(m_by_year_wide, paste0('output_emissions_avoided_', this_data_year, '_wide.csv'))
-    saveRDS(m_by_year_wide, file=paste0('output_emissions_avoided_', this_data_year, '_wide.RDS'))
-}
-
-
+m_site %>%
+    filter(Data_Year == year + 1) %>%
+    select(-Data_Year) %>%
+    group_by(CI_ID, year) %>%
+    mutate(forest_loss_ha=abs(forest_loss_ha)) %>%  # Make forest loss positive since it is a measure in ha
+    summarise(CI_Start_Year=CI_Start_Year[1],
+              CI_End_Year=CI_End_Year[1],
+              forest_loss_ha_CI_minus_control=forest_loss_ha[treatment] - forest_loss_ha[!treatment],
+              Emissions_MgCO2e_CI_minus_control=Emissions_MgCO2e[treatment] - Emissions_MgCO2e[!treatment],
+              fc_loss_pct_of_control=(sum(forest_loss_ha[treatment], na.rm=TRUE) /
+                                      sum(forest_loss_ha[!treatment], na.rm=TRUE))*100) %>%
+    relocate(year, .after=CI_End_Year) -> m_by_year
+saveRDS(m_by_year, file=paste0('output_emissions_avoided.RDS'))
+write_csv(m_by_year, paste0('output_emissions_avoided.csv'))
+m_by_year %>%
+    select(-forest_loss_ha_CI_minus_control, -fc_loss_pct_of_control) %>%
+    pivot_wider(names_from=year,
+                values_from=Emissions_MgCO2e_CI_minus_control,
+                names_prefix='c_oavoid_') -> m_by_year_wide
+write_csv(m_by_year_wide, paste0('output_emissions_avoided_wide.csv'))
+saveRDS(m_by_year_wide, file=paste0('output_emissions_avoided_wide.RDS'))
 
 # Plot how our sites due as a percentage of the emissions of the control sites
 m_site %>%
-    filter(year >= 2017) %>%
-    group_by(Data_Year, year, CI_ID) %>%
+    filter(Data_Year == year + 1) %>%
+    select(-Data_Year) %>%
+    group_by(year, CI_ID) %>%
     summarise(fc_loss_pct_of_control=(sum(forest_loss_ha[treatment], na.rm=TRUE) /
-                                     sum(forest_loss_ha[!treatment], na.rm=TRUE))*100) %>%
-    group_by(Data_Year, year) %>%
+                                      sum(forest_loss_ha[!treatment], na.rm=TRUE))*100,
+              lt100=factor(sum(fc_loss_pct_of_control < 100, na.rm=TRUE))) %>%
+    group_by(year) %>%
     arrange(fc_loss_pct_of_control) %>%
+    filter(fc_loss_pct_of_control <= 1000) %>%
     mutate(order=1:n()) %>%
     ggplot() +
-    geom_bar(aes(x=order, fc_loss_pct_of_control, colour=year), stat='identity') +
-    facet_grid(~Data_Year)
+    geom_bar(aes(x=order, fc_loss_pct_of_control, colour=lt100, fill=lt100), stat='identity') +
+    facet_grid(year ~ ., scales='free')
+ggsave('sites_filtered.png')
 
-m_site %>%
-    filter(year >= 2017) %>%
-    group_by(Data_Year, year, CI_ID) %>%
-    summarise(fc_loss_pct_of_control=(sum(forest_loss_ha[treatment], na.rm=TRUE) /
-                                      sum(forest_loss_ha[!treatment], na.rm=TRUE))*100) %>%
-    ungroup() %>%
-    group_by(Data_Year, year) %>%
+m_by_year %>%
+    group_by(year) %>%
     summarise(gt100=sum(fc_loss_pct_of_control > 100, na.rm=TRUE),
               lt100=sum(fc_loss_pct_of_control < 100, na.rm=TRUE),
-              lt0=sum(fc_loss_pct_of_control < 0, na.rm=TRUE))
-
-table(m_site_wide$c_oavoid_2018 > 0)
-summary(m_site_wide$c_oavoid_2018)
-sum(m_site_wide$c_oavoid_2018, na.rm=TRUE)
+              lt0=sum(fc_loss_pct_of_control < 0, na.rm=TRUE),
+              avoided_em=sum(Emissions_MgCO2e_CI_minus_control, na.rm=TRUE))
 
 m %>%
     group_by(CI_ID) %>%

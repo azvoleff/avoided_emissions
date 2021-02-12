@@ -98,7 +98,6 @@ filter_groups <- function(vals) {
 ###  Run matching
 
 set.seed(31)
-
 ae <- foreach(this_year=unique(treatment_key$Data_Year),
               .combine=foreach_rbind, .inorder=FALSE) %do% {
     foreach(this_CI_ID=unique(treatment_key$CI_ID),
