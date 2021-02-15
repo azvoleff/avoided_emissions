@@ -8,9 +8,7 @@ library(tictoc)
 m_site <- readRDS('output_raw_by_site.RDS')
 
 m_site %>%
-    filter(Data_Year == year + 1) %>%
-    select(-Data_Year) %>%
-    group_by(CI_ID, year) %>%
+    group_by(name, year) %>%
     mutate(forest_loss_ha=abs(forest_loss_ha)) %>%  # Make forest loss positive since it is a measure in ha
     summarise(CI_Start_Year=CI_Start_Year[1],
               CI_End_Year=CI_End_Year[1],

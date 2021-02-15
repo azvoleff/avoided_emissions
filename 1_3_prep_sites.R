@@ -4,70 +4,31 @@ library(units)
 library(tidyverse)
 library(lubridate)
 
-data_folder <- 'D:/Documents and Settings/azvoleff/OneDrive - Conservation International Foundation/Data'
+data_folder <- 'D:/Documents and Settings/azvoleff/Desktop/Guardian Stuff'
 
-sites_2018 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2018.shp"))
-sites_2018 <- st_zm(sites_2018, drop=TRUE)
-sites_2018$data_year <- 2018
+alto_comparison <- st_read(paste0(data_folder, "/AltoMayo_ComparisonArea (1).kml"))
+alto_comparison <- st_zm(alto_comparison, drop=TRUE)
+alto_comparison <- transmute(alto_comparison, name='Alto', type='comparison')
+alto_site <- st_read(paste0(data_folder, "/AMPF_boundary_2008.shp"))
+alto_site <- st_zm(alto_site, drop=TRUE)
+alto_site <- transmute(alto_site, name='Alto', type='site')
+alto_site <- st_transform(alto_site, 4326)
+sites <- rbind(alto_comparison, alto_site)
 
-sites_2019 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2019.shp"))
-sites_2019 <- st_zm(sites_2019, drop=TRUE)
-sites_2019$data_year <- 2019
-
-sites_2020 <- st_read(paste0(data_folder, "/Impact_Sites/Final_2020.shp"))
-sites_2020 <- st_zm(sites_2020, drop=TRUE)
-sites_2020$data_year <- 2020
-
-sites <- rbind(sites_2018, sites_2019)
-sites <- rbind(sites, sites_2020)
+chyulu_comparison <- st_read(paste0(data_folder, "/ChyuluHills_ComparisonArea.kml"))
+chyulu_comparison <- st_zm(chyulu_comparison, drop=TRUE)
+chyulu_comparison <- transmute(chyulu_comparison, name='chyulu', type='comparison')
+chyulu_site <- st_read(paste0(data_folder, "/ProjectArea.shp"))
+chyulu_site <- st_zm(chyulu_site, drop=TRUE)
+chyulu_site <- st_transform(chyulu_site, 4326)
+chyulu_site <- transmute(chyulu_site, name='chyulu', type='site')
+sites <- rbind(sites, chyulu_comparison)
+sites <- rbind(sites, chyulu_site)
 
 sites_cea <- st_transform(sites, '+proj=cea')
 sites_cea$area_cea <- st_area(sites_cea)
 units(sites_cea$area_cea) <- 'hectares'
-
 sites <- st_transform(sites_cea, 4326)
 
-table(sites_cea$area_cea < as_units(100, 'hectares'))
-
-sites %>%
-    select(CI_ID,
-           Data_Year=data_year,
-           Area=Area_Name_,
-           CI_Start_Date=CI_Start_D,
-           CI_End_Date=CI_End_Dat,
-           CI_Division=CI_Divisio,
-           Restoration=Restoratio,
-           Area_ha=area_cea) -> sites
-sites$CI_ID <- factor(sites$CI_ID)
-
-sites$CI_Start_Date_clean <- as.character(sites$CI_Start_Date)
-sites$CI_Start_Date_clean <- str_replace(sites$CI_Start_Date_clean, '^([0-9]{4})$', '1/1/\\1')
-sites$CI_Start_Date_clean <- mdy(sites$CI_Start_Date_clean)
-sites %>%
-    ggplot() +
-    geom_histogram(aes(CI_Start_Date_clean))
-# Set all start dates that are missing to 2016 (the median year)
-sites$CI_Start_Date_clean[is.na(sites$CI_Start_Date_clean)] <- mdy('1/1/2016')
-sites$CI_Start_Year <- year(sites$CI_Start_Date_clean)
-
-sites$CI_End_Date_clean <- as.character(sites$CI_End_Date)
-sites$CI_End_Date_clean <- str_replace(sites$CI_End_Date_clean, '^([0-9]{4})$', '1/1/\\1')
-sites$CI_End_Date_clean <- mdy(sites$CI_End_Date_clean)
-sites %>%
-    ggplot() +
-    geom_histogram(aes(CI_End_Date_clean))
-# Set all end dates that are greater than 12/31/2019 to NA, so they are treated 
-# as ongoing
-sites$CI_End_Date_clean[sites$CI_End_Date_clean > mdy('12/31/2019')] <- NA
-sites$CI_End_Year <- year(sites$CI_End_Date_clean)
-table(is.na(sites$CI_End_Year))
-
-sites$ID <- 1:nrow(sites)
-write_csv(select(sites, CI_ID, ID), 'site_ID_key.csv')
+st_write(sites, paste0(data_folder, '/sites_combined.shp'))
 saveRDS(sites, 'sites.RDS')
-
-# Check for overlaps
-# intersections <- foreach (year in c(2019, 2019)) %do% {
-#     these_sites <- sites_cea[(!sites$area_cea_lt_100ha) & (sites$data_year == 2018), ]
-#     return st_intersects(these_sites, these_sites)
-# }

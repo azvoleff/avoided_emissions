@@ -72,21 +72,6 @@ write_csv(data.frame(names=names(d)), file='all_covariates_names.csv')
 sites <- readRDS('sites.RDS')
 dim(sites)
 
-# Drop sites with no overlap with GADM (since they'd throw errors later during 
-# the extraction) - these are marine sites
-sites <- filter(sites, !(CI_ID %in% c('242002', '242114')))
-
-# Filter to only sites over 100 ha
-sites <- sites[!sites$Area_ha < as_units(100, 'hectares'), ]
-dim(sites)
-
-# Select only sites that are not rangeland restoration
-sites$Rangeland <- FALSE
-sites$Rangeland[sites$Restoration == 'Rangeland Restoration'] <- TRUE
-table(sites$Rangeland)
-sites <- sites[!sites$Rangeland, ]
-dim(sites)
-
 regions <- readRDS('regions.RDS')
 regions_rast <- fasterize(regions, raster(d[[1]]), field='level1_ID')
 names(regions_rast) <- 'region'
@@ -101,11 +86,14 @@ d <- stack(d, regions_rast)
 treatment_key <- foreach(n=1:nrow(sites), .combine=rbind) %do% {
     print(n)
     exact_extract(d$region, sites[n, ], include_cell=TRUE, 
-                  include_cols=c('CI_ID', 'Data_Year'))[[1]]
+                  include_cols=c('name', 'type'))[[1]]
 }
 treatment_key %>%
     rename(region=value) -> treatment_key
 treatment_key <- treatment_key[!is.na(treatment_key$region), ]
+# don't pull controls for the Guardian's comparison regions - no need to
+dplyr::filter(treatment_key, type != 'comparison') %>%
+    dplyr::select(-type) -> treatment_key
 saveRDS(treatment_key, 'Output/treatment_cell_key.RDS')
 
 # Run extraction of control and treatment data by region to make the problem 
