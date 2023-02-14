@@ -29,7 +29,7 @@ m_by_year %>%
 write_csv(m_by_year_wide, paste0('output_emissions_avoided_wide.csv'))
 saveRDS(m_by_year_wide, file=paste0('output_emissions_avoided_wide.RDS'))
 
-# Plot how our sites due as a percentage of the emissions of the control sites
+# Plot how our sites do as a percentage of the emissions of the control sites
 m_site %>%
     filter(Data_Year == year + 1) %>%
     select(-Data_Year) %>%
